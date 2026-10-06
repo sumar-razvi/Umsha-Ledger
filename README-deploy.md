@@ -91,6 +91,10 @@ Add staff as users (Owner only), each with one role: Owner, Finance, Studio, Sto
 
 In **Settings**, fill in company name, NTN/STRN, `backupFolderId` and `attachmentsFolderId`.
 
+## Checking speed
+
+`npm run perf` builds about 20,000 journal lines (a busy year) through the real server code in memory and lists, for every screen and report, the server time and the number of Sheet cells read, with an estimate for Apps Script (targets: screens under 3 s, reports under 8 s). To confirm on Google, copy the production Sheet, point a test deployment's `SHEET_ID` at the copy and time the same screens; the response `meta.ms` field gives the server time.
+
 ## Troubleshooting
 
 | Symptom | Fix |

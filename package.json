@@ -10,6 +10,7 @@
   "scripts": {
     "test": "node --test",
     "build": "node scripts/build-core.js",
+    "perf": "node scripts/perf.js",
     "test:ui": "node tests/ui/run.js",
     "serve": "node scripts/dev-server.js"
   }

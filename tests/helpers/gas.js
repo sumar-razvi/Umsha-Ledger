@@ -56,8 +56,12 @@ class FakeSheet {
     return 0;
   }
   getLastColumn() {
+    // Columns never move left in practice; scan the header row and a sample of
+    // rows (a full scan is slow with 20k-row tabs in the performance script).
     let last = 0;
-    this.cells.forEach((row) => (row || []).forEach((v, c) => { if (v !== '' && v !== undefined && c + 1 > last) last = c + 1; }));
+    const scan = (row) => (row || []).forEach((v, c) => { if (v !== '' && v !== undefined && c + 1 > last) last = c + 1; });
+    if (this.cells.length <= 200) this.cells.forEach(scan);
+    else { this.cells.slice(0, 100).forEach(scan); this.cells.slice(-100).forEach(scan); }
     return last;
   }
   getRange(row, col, numRows, numCols) {
@@ -84,6 +88,7 @@ class FakeRange {
   constructor(sheet, row, col, nr, nc) { Object.assign(this, { sheet, row, col, nr, nc }); }
   getValues() {
     this.sheet.ss.stats.getValues++;
+    this.sheet.ss.stats.cellsRead = (this.sheet.ss.stats.cellsRead || 0) + this.nr * this.nc;
     const out = [];
     for (let r = 0; r < this.nr; r++) {
       const src = this.sheet.cells[this.row - 1 + r] || [];

@@ -72,6 +72,9 @@ var Api = {
       Summaries.apply(tx); // dashboard caches, in the same lock and commit
       var res = { ok: true, data: out.data === undefined ? null : out.data };
       var audit = out.audit || {};
+      // Snapshot now: `before` is often the cached row, which the commit updates in place.
+      var snap = function (v) { return v === undefined || v === '' ? '' : JSON.parse(JSON.stringify(v)); };
+      audit = Object.assign({}, audit, { before: snap(audit.before), after: snap(audit.after) });
       tx.append('AuditLog', [{
         id: tx.nextDocId('AUD', env.today), ts: env.ts, userEmail: user.email, action: action,
         docType: audit.docType || '', docId: audit.docId || '', requestId: requestId, summary: audit.summary || action,
@@ -85,7 +88,7 @@ var Api = {
   },
 
   findRequest_: function (requestId) {
-    return Db.get('Requests', requestId);
+    return Db.findRows('Requests', 'requestId', requestId)[0] || null;
   },
 
   // A repeated requestId returns the stored result (invariant 8) without posting again.

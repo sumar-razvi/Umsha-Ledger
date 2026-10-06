@@ -92,10 +92,15 @@ var Db = (function () {
     values.forEach(function (row) {
       var o = {};
       names.forEach(function (n, k) { o[n] = Schema.fromCell(n, row[idx[k] - lo]); });
-      if (o[names[0]] !== '') out.push(o);
+      out.push(o);
     });
     cache[ck] = out;
     return out;
+  }
+
+  // readColumns without blank rows.
+  function readColumnsNonBlank(tab, names) {
+    return readColumns(tab, names).filter(function (o) { return o[names[0]] !== ''; });
   }
 
   // {key: row} for tabs with a key column.
@@ -125,19 +130,59 @@ var Db = (function () {
     if (lastNeeded > max) sh.insertRowsAfter(max, lastNeeded - max);
   }
 
+  // The header row only (appends to big tabs must not read every row).
+  function headerOnly(tab) {
+    if (cache[tab]) return cache[tab].header;
+    var hk = 'header:' + tab;
+    if (!cache[hk]) {
+      var sh = sheet(tab);
+      var lastCol = sh.getLastColumn();
+      cache[hk] = lastCol ? sh.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); }) : [];
+    }
+    return cache[hk];
+  }
+
   function appendRows(tab, objs) {
     if (!objs.length) return;
-    var t = load(tab);
-    var rows = objs.map(function (o) { return Schema.toRow(t.header, o); });
-    var start = t.sheet.getLastRow() + 1;
-    ensureRows(t.sheet, start + rows.length - 1);
-    t.sheet.getRange(start, 1, rows.length, t.header.length).setValues(rows);
+    var t = cache[tab];
+    var sh = t ? t.sheet : sheet(tab);
+    var hdr = headerOnly(tab);
+    var rows = objs.map(function (o) { return Schema.toRow(hdr, o); });
+    var start = sh.getLastRow() + 1;
+    ensureRows(sh, start + rows.length - 1);
+    sh.getRange(start, 1, rows.length, hdr.length).setValues(rows);
+    Object.keys(cache).forEach(function (k) { if (k.indexOf('cols:' + tab + ':') === 0) delete cache[k]; });
+    if (!t) return; // not loaded in this request: nothing to keep in step
     rows.forEach(function (r, i) {
       var o = Schema.fromRow(t.header, r);
       Object.defineProperty(o, '__row', { value: start + i, enumerable: false, writable: true });
       t.rows.push(o);
       if (t.index) t.index[o[Schema.keyOf(tab)]] = o;
     });
+  }
+
+  // Rows whose `column` equals `value`, reading that one column and then
+  // only the block of rows that matches (for one entry's lines, one request).
+  function findRows(tab, column, value) {
+    if (cache[tab]) return cache[tab].rows.filter(function (r) { return r[column] === value; });
+    var keys = readColumns(tab, [column]);
+    var hits = [];
+    keys.forEach(function (o, i) { if (o[column] === value) hits.push(i + 2); });
+    if (!hits.length) return [];
+    var hdr = headerOnly(tab);
+    var lo = hits[0];
+    var hi = hits[hits.length - 1];
+    var want = {};
+    hits.forEach(function (r) { want[r] = true; });
+    var values = sheet(tab).getRange(lo, 1, hi - lo + 1, hdr.length).getValues();
+    var out = [];
+    values.forEach(function (row, i) {
+      if (!want[lo + i]) return;
+      var o = Schema.fromRow(hdr, row);
+      Object.defineProperty(o, '__row', { value: lo + i, enumerable: false, writable: true });
+      out.push(o);
+    });
+    return out;
   }
 
   // Write changed fields of an existing row, cell by cell.
@@ -169,6 +214,7 @@ var Db = (function () {
   function rewrite(tab, objs) {
     if (Schema.TABS[tab].appendOnly) throw Validate.coreError('E_INTERNAL', tab + ' is append-only');
     var t = load(tab);
+    Object.keys(cache).forEach(function (k) { if (k.indexOf('cols:' + tab + ':') === 0) delete cache[k]; });
     var last = t.sheet.getLastRow();
     if (last > 1) t.sheet.getRange(2, 1, last - 1, t.header.length).clearContent();
     delete cache[tab];
@@ -302,7 +348,8 @@ var Db = (function () {
     spreadsheet: spreadsheet,
     reset: reset,
     read: read,
-    readColumns: readColumns,
+    readColumns: readColumnsNonBlank,
+    findRows: findRows,
     header: header,
     byKey: byKey,
     get: get,

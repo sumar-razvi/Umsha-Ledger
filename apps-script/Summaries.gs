@@ -23,39 +23,37 @@ var Summaries = {
     tx.append('MonthlySummary', merged.appends);
   },
 
-  // Recompute the DailySales rows of every (date, store) a sale in this
-  // transaction touches (new sales, returns, and voided sales).
+  // Fold this transaction's sales into DailySales: new sales add their
+  // rows; a sale voided here (reversal) takes its rows away again.
   applyDaily_: function (tx) {
-    var touched = {};
     var newSales = tx.appends.Sales || [];
-    var saleUpdates = (tx.updates.Sales || []).filter(function (u) { return u.id; });
-    if (!newSales.length && !saleUpdates.length) return;
-    var pending = {};
-    saleUpdates.forEach(function (u) { pending[u.id] = Object.assign(pending[u.id] || {}, u.fields); });
-    var sales = Db.read('Sales').map(function (s) { return pending[s.id] ? Object.assign({}, s, pending[s.id]) : s; }).concat(newSales);
-    var byId = {};
-    sales.forEach(function (s) { byId[s.id] = s; });
-    newSales.forEach(function (s) { touched[s.date + '|' + s.store] = true; });
-    saleUpdates.forEach(function (u) { var s = byId[u.id]; if (s) touched[s.date + '|' + s.store] = true; });
-    var hit = function (s) { return touched[s.date + '|' + (s.store || '')]; };
-    var ids = {};
-    var some = sales.filter(hit);
-    some.forEach(function (s) { ids[s.id] = true; });
-    var lines = Db.read('SaleLines').concat(tx.appends.SaleLines || []).filter(function (l) { return ids[l.saleId]; });
-    var pays = Db.read('SalePayments').concat(tx.appends.SalePayments || []).filter(function (p) { return ids[p.saleId]; });
-    var fresh = Kpis.dailySalesRows(some, lines, pays, Summaries.clearingCodes_());
-    var freshByKey = {};
-    fresh.forEach(function (r) { freshByKey[Kpis.dailyKey(r)] = r; });
-    Db.read('DailySales').forEach(function (row) {
-      if (!hit(row)) return;
-      var k = Kpis.dailyKey(row);
-      var f = freshByKey[k];
-      var fields = {};
-      Kpis.DAILY_FIELDS.forEach(function (n) { fields[n] = f ? f[n] : 0; });
-      tx.updateWhere('DailySales', function (r) { return r === row; }, fields);
-      delete freshByKey[k];
+    var voided = (tx.updates.Sales || []).filter(function (u) { return u.id && u.fields.status === 'VOID'; }).map(function (u) { return u.id; });
+    if (!newSales.length && !voided.length) return;
+    var codes = Summaries.clearingCodes_();
+    var delta = Kpis.dailySalesRows(newSales, tx.appends.SaleLines || [], tx.appends.SalePayments || [], codes);
+    if (voided.length) {
+      var gone = {};
+      voided.forEach(function (id) { gone[id] = true; });
+      var sales = Db.read('Sales').filter(function (x) { return gone[x.id] && x.status !== 'VOID'; });
+      var minus = Kpis.dailySalesRows(sales, Db.read('SaleLines').filter(function (l) { return gone[l.saleId]; }), Db.read('SalePayments').filter(function (x) { return gone[x.saleId]; }), codes);
+      minus.forEach(function (r) { Kpis.DAILY_FIELDS.forEach(function (f) { r[f] = -r[f]; }); });
+      delta = delta.concat(minus);
+    }
+    var byKey = {};
+    delta.forEach(function (d) {
+      var k = Kpis.dailyKey(d);
+      if (!byKey[k]) { byKey[k] = { date: d.date, store: d.store, channel: d.channel }; Kpis.DAILY_FIELDS.forEach(function (f) { byKey[k][f] = 0; }); }
+      Kpis.DAILY_FIELDS.forEach(function (f) { byKey[k][f] += d[f]; });
     });
-    tx.append('DailySales', Object.keys(freshByKey).sort().map(function (k) { return freshByKey[k]; }));
+    Db.read('DailySales').forEach(function (row) {
+      var d = byKey[Kpis.dailyKey(row)];
+      if (!d) return;
+      var fields = {};
+      Kpis.DAILY_FIELDS.forEach(function (f) { fields[f] = (row[f] || 0) + d[f]; });
+      tx.updateWhere('DailySales', function (r) { return r === row; }, fields);
+      delete byKey[Kpis.dailyKey(row)];
+    });
+    tx.append('DailySales', Object.keys(byKey).sort().map(function (k) { return byKey[k]; }));
   },
 
   clearingCodes_: function () {
@@ -122,7 +120,9 @@ var Dashboard = {
       targets: Db.read('KpiTargets'),
       monthly: Db.read('MonthlySummary'),
     };
-    Kpis.TAB_DATA[tab].forEach(function (name) {
+    // Store staff never see cost figures, so their Mirae tab skips the stock and cost tabs.
+    var tabs = opts.role === 'STORE' ? ['DailySales', 'Sales', 'SalePayments', 'CashUps'] : Kpis.TAB_DATA[tab];
+    tabs.forEach(function (name) {
       data[name.charAt(0).toLowerCase() + name.slice(1)] = Db.read(name);
     });
     // Periods that do not follow month boundaries need the lines themselves.

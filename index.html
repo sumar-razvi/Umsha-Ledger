@@ -579,7 +579,7 @@ const CONFIG = {
     }
     window.scrollTo(0, 0);
   }
-  window.addEventListener('hashchange', render);
+  window.addEventListener('hashchange', () => { document.querySelectorAll('.overlay').forEach((o) => o.remove()); render(); });
 
   // ---------- shell ----------
   const NAV = {
@@ -913,7 +913,7 @@ const CONFIG = {
       rows.appendChild(h('div', { class: 'row' }, field('Item', sel), field('Quantity', qty)));
     }
     addRow();
-    sheet('Issue materials to ' + d.job.id, h('div', {}, box, items.length ? null : h('div', { class: 'notice' }, 'No fabric or trims in stock yet. Stock comes in through purchase bills (milestone M4).'),
+    sheet('Issue materials to ' + d.job.id, h('div', {}, box, items.length ? null : h('div', { class: 'notice' }, 'No fabric or trims in stock yet. Stock comes in through purchase bills.'),
       field('Date', date), rows, h('button', { type: 'button', class: 'ghost', onclick: addRow }, '+ Another item')), (close) => [
       h('button', { type: 'button', onclick: close }, 'Cancel'),
       h('button', { type: 'button', class: 'primary', onclick: async (e) => {
@@ -2542,12 +2542,52 @@ const CONFIG = {
     const rb = rangeBar(params, '/reports/audit');
     view.appendChild(h('h1', {}, 'Audit log'));
     view.appendChild(rb.bar);
-    const rows = await api('reports.auditLog', { from: rb.from, to: rb.to, q: params.get('q') || '' });
+    const all = await api('reports.auditLog', { from: rb.from, to: rb.to, q: params.get('q') || '', limit: 2000 });
+    const distinct = (f) => [...new Set(all.map(f).filter(Boolean))].sort();
+    const q = h('input', { type: 'search', value: params.get('q') || '', placeholder: 'Search what happened or a document number', 'aria-label': 'Search audit log' });
+    const who = h('select', { 'aria-label': 'Person' }, h('option', { value: '' }, 'Everyone'), distinct((a) => a.userEmail).map((e) => h('option', { value: e, selected: e === params.get('user') }, e)));
+    const what = h('select', { 'aria-label': 'Document type' }, h('option', { value: '' }, 'All documents'), distinct((a) => a.docType).map((d) => h('option', { value: d, selected: d === params.get('docType') }, d.charAt(0) + d.slice(1).toLowerCase().replace(/_/g, ' '))));
+    const apply = () => { const x = new URLSearchParams(params); ['q', 'user', 'docType'].forEach((k) => x.delete(k)); if (q.value) x.set('q', q.value); if (who.value) x.set('user', who.value); if (what.value) x.set('docType', what.value); go('#/reports/audit?' + x.toString()); };
+    q.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
+    who.addEventListener('change', apply);
+    what.addEventListener('change', apply);
+    view.appendChild(h('div', { class: 'card noprint' }, h('div', { class: 'row' }, field('Search', q), field('Person', who), field('Document', what))));
+    const rows = all.filter((a) => (!params.get('user') || a.userEmail === params.get('user')) && (!params.get('docType') || a.docType === params.get('docType')));
+    view.appendChild(h('p', { class: 'muted small' }, rows.length + ' entr' + (rows.length === 1 ? 'y' : 'ies') + (all.length >= 2000 ? ' (the latest 2,000; narrow the dates to see older ones)' : '') + '. Tap one to see what changed.'));
     view.appendChild(h('div', { class: 'card' }, dataTable([
-      { key: 'ts', label: 'When', render: (a) => String(a.ts).replace('T', ' ').slice(0, 16) }, { key: 'userEmail', label: 'Who' },
+      { key: 'ts', label: 'When', render: (a) => String(a.ts).replace('T', ' ').slice(0, 16) }, { key: 'userEmail', label: 'Who', opt: true },
       { key: 'summary', label: 'What' }, { key: 'docId', label: 'Document', opt: true },
-    ], rows, { csv: 'audit-log', empty: 'Nothing in this period.' })));
+    ], rows, { csv: 'audit-log', empty: 'Nothing matches.', onRow: auditSheet })));
   });
+  function auditLink(a) {
+    const id = a.docId;
+    if (!id) return null;
+    const m = { JOB: '#/orders/' + id, BILL: '#/purchases/bills/' + id, EXPENSE: '#/purchases/bills/' + id, INVOICE: '#/receipts/INVOICE/' + id, PAYMENT: '#/receipts/PAYMENT/' + id,
+      SALE: '#/receipts/SALE/' + id, JOURNAL: '#/je/' + id, ITEM: '#/inventory/items/' + id, BANK_REC: '#/banking/rec/' + id, ACCOUNT: '#/accounts', CONTACT: /^CUS-/.test(id) ? '#/customers/' + id : null,
+      TAX_CODE: '#/settings', SETTING: '#/settings', USER: '#/settings', KPI_TARGET: '#/settings', PERIOD: '#/settings' };
+    return m[a.docType] || null;
+  }
+  function auditSheet(a) {
+    const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
+    const before = obj(a.before); const after = obj(a.after);
+    let detail = null;
+    if (before || after) {
+      const keys = [...new Set(Object.keys(before || {}).concat(Object.keys(after || {})))].filter((k) => JSON.stringify((before || {})[k]) !== JSON.stringify((after || {})[k]));
+      const show = (v) => (v === undefined || v === '' ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v));
+      detail = keys.length ? dataTable([{ key: 'k', label: 'Field' }, { key: 'b', label: 'Before' }, { key: 'a', label: 'After' }], keys.map((k) => ({ k, b: before ? show(before[k]) : '—', a: after ? show(after[k]) : '—' })))
+        : h('p', { class: 'muted small' }, 'No field changed.');
+    } else if (a.before || a.after) {
+      detail = h('pre', { class: 'small', style: 'white-space:pre-wrap' }, JSON.stringify({ before: a.before, after: a.after }, null, 1));
+    }
+    const href = auditLink(a);
+    sheet('Audit entry', h('div', {}, h('div', { class: 'kv' },
+      h('span', { class: 'muted' }, 'When'), h('span', { class: 'v' }, String(a.ts).replace('T', ' ').slice(0, 19)),
+      h('span', { class: 'muted' }, 'Who'), h('span', { class: 'v' }, a.userEmail),
+      h('span', { class: 'muted' }, 'Action'), h('span', { class: 'v' }, a.action),
+      h('span', { class: 'muted' }, 'Document'), h('span', { class: 'v' }, href ? h('a', { href }, a.docType + ' ' + a.docId) : (a.docType + ' ' + (a.docId || '')).trim() || '—'),
+      h('span', { class: 'muted' }, 'Request'), h('span', { class: 'v small' }, a.requestId || '—')),
+      h('p', {}, a.summary), detail), (close) => [h('button', { type: 'button', onclick: close }, 'Close')]);
+  }
 
   // ---------- journals ----------
   route('/journals', async (view, args, params) => {
@@ -3015,14 +3055,6 @@ const CONFIG = {
       } }, 'Save'),
     ]);
   }
-
-  // ---------- modules not built yet ----------
-  const SOON = { };
-  route('/soon/:what', async (view, [what]) => {
-    const s = SOON[what] || [what, 'a later milestone'];
-    view.appendChild(h('h1', {}, s[0]));
-    view.appendChild(h('div', { class: 'card empty' }, s[0] + ' arrives in milestone ' + s[1] + '.'));
-  });
 
   // ---------- sign-in screen and boot ----------
   let signInShown = false;

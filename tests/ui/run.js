@@ -506,6 +506,18 @@ async function noHorizontalScroll(page) {
     await kt.getByRole('button', { name: 'Save' }).click();
     await kt.waitFor({ state: 'detached' });
     assert.equal(gas.rows('KpiTargets').find((t) => t.kpi === 'minCash').redAt, 100000000);
+    // M9: audit log viewer, filtered, with what changed.
+    await dp.goto(base + '#/reports/audit');
+    await dp.locator('select[aria-label="Document type"]').selectOption('KPI_TARGET');
+    await dp.waitForURL(/docType=KPI_TARGET/);
+    await dp.locator('table.data tbody tr', { hasText: 'minCash' }).first().click();
+    const ae = dp.getByRole('dialog', { name: 'Audit entry' });
+    await ae.locator('td', { hasText: 'redAt' }).waitFor();
+    assert.equal(await ae.locator('tr', { hasText: 'redAt' }).locator('td').nth(2).innerText(), '100000000');
+    await shot(dp, 'audit-entry');
+    await ae.getByRole('link', { name: /KPI_TARGET/ }).click();
+    await dp.waitForSelector('h1:has-text("Settings")');
+    assert.equal(await dp.locator('.overlay').count(), 0, 'the sheet closes on navigation');
     await dp.goto(base + '#/dashboard?tab=CASH&period=MTD&brand=ALL&cmp=PREVIOUS');
     await dp.waitForSelector('.tile.rag-red[data-kpi="A1"]');
     assert.deepEqual(db.errors, [], 'browser errors: ' + db.errors.join('\n'));

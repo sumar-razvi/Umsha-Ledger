@@ -33,9 +33,18 @@ function loadCtx_(parts) {
   if (p.stock) {
     ctx.items = Db.byKey('Items');
     ctx.itemBalances = Db.byKey('ItemBalances');
-    ctx.stockMoves = Db.read('StockMoves');
   }
+  // Every stock move: only for returns of issued materials and cancellations.
+  if (p.moves) ctx.stockMoves = Db.read('StockMoves');
   return ctx;
+}
+
+// Balance of every account (debit - credit, all dates) from MonthlySummary,
+// which every write keeps in step with JournalLines.
+function summaryBalances_() {
+  var out = {};
+  Db.read('MonthlySummary').forEach(function (r) { out[r.accountCode] = (out[r.accountCode] || 0) + r.debitPaisa - r.creditPaisa; });
+  return out;
 }
 
 // Every journal line with Journal.isClosing joined on (reports need it).
@@ -354,7 +363,7 @@ var Actions = {
     var c = Db.get('Contacts', p.id);
     if (!c) throw Validate.coreError('E_NOT_FOUND', 'Contact ' + p.id + ' not found', 'id');
     var acc = Validate.indexAccounts(Db.read('Accounts'));
-    var lines = Db.read('JournalLines');
+    var lines = Db.readColumns('JournalLines', ['accountCode', 'debitPaisa', 'creditPaisa', 'contactId']);
     var cust = Reports.customerBalances(lines, acc)[c.id] || { owesPaisa: 0, advanceHeldPaisa: 0 };
     return Object.assign({}, c, { owesPaisa: cust.owesPaisa, advanceHeldPaisa: cust.advanceHeldPaisa, weOwePaisa: Reports.vendorBalances(lines, acc)[c.id] || 0 });
   },
@@ -424,7 +433,7 @@ var Actions = {
     var job = Db.get('Jobs', p.id);
     if (!job) throw Validate.coreError('E_NOT_FOUND', 'Job ' + p.id + ' not found', 'id');
     var acc = Validate.indexAccounts(Db.read('Accounts'));
-    var lines = Db.read('JournalLines');
+    var lines = Db.findRows('JournalLines', 'jobId', job.id); // this order's lines only
     var payments = Db.read('PaymentAllocations').filter(function (a) { return a.docType === 'JOB' && a.docId === job.id; }).map(function (a) {
       return Object.assign({}, Db.get('Payments', a.paymentId) || {}, { allocatedPaisa: a.amountPaisa });
     });
@@ -479,7 +488,7 @@ var Actions = {
 
   'jobs.list': function (p) {
     var acc = Validate.indexAccounts(Db.read('Accounts'));
-    var lines = Db.read('JournalLines');
+    var lines = Db.readColumns('JournalLines', ['accountCode', 'debitPaisa', 'creditPaisa', 'contactId', 'jobId']);
     var adv = Reports.jobAdvances(lines, acc);
     var costs = {};
     var wipCode = acc.accountsBySystemKey.WIP.code;
@@ -632,7 +641,7 @@ var Actions = {
   },
 
   'jobs.returnStock': function (p, env) {
-    var ctx = loadCtx_({ jobs: true, stock: true });
+    var ctx = loadCtx_({ jobs: true, stock: true, moves: true });
     var entry = Posting.returnStock(Object.assign({}, p, { date: need_(p.date, 'date', 'Enter the date') }), ctx);
     var ids = postEntry_(env, entry);
     return { data: { jeId: ids.jeId, moveIds: ids.moveIds }, audit: { docType: 'JOB', docId: p.jobId, summary: 'Returned stock from ' + p.jobId } };
@@ -663,7 +672,7 @@ var Actions = {
   },
 
   'jobs.cancel': function (p, env) {
-    var ctx = loadCtx_({ jobs: true, ledger: true, stock: true });
+    var ctx = loadCtx_({ jobs: true, ledger: true, stock: true, moves: true });
     var date = need_(p.date, 'date', 'Enter the date');
     var entry = Posting.cancelJob(Object.assign({}, p, { date: date }), ctx);
     var ids = postEntry_(env, entry);
@@ -713,7 +722,7 @@ var Actions = {
 
   'vendors.list': function (p) {
     var acc = Validate.indexAccounts(Db.read('Accounts'));
-    var lines = Db.read('JournalLines');
+    var lines = Db.readColumns('JournalLines', ['accountCode', 'debitPaisa', 'creditPaisa', 'contactId']);
     var owed = Reports.vendorBalances(lines, acc);
     var advCode = acc.accountsBySystemKey.VENDOR_ADV.code;
     var adv = {};
@@ -811,7 +820,7 @@ var Actions = {
     // id means "edit this account"; without it the code must be new.
     var existing = p.id ? Db.get('Accounts', String(p.id)) : null;
     if (p.id && !existing) throw Validate.coreError('E_NOT_FOUND', 'Account ' + p.id + ' not found', 'id');
-    var used = existing ? Db.read('JournalLines').some(function (l) { return l.accountCode === existing.code; }) : false;
+    var used = existing ? Db.readColumns('JournalLines', ['accountCode']).some(function (l) { return l.accountCode === existing.code; }) : false;
     var r = Master.prepareAccount(p, existing, Db.read('Accounts'), used);
     if (existing) env.tx.update('Accounts', existing.id, r.row);
     else env.tx.append('Accounts', [r.row]);
@@ -822,14 +831,14 @@ var Actions = {
     var a = Db.get('Accounts', String(need_(p.code, 'code', 'Choose the account')));
     if (!a) throw Validate.coreError('E_NOT_FOUND', 'Account ' + p.code + ' not found', 'code');
     if (a.systemKey) throw Validate.coreError('E_VALIDATION', a.name + ' is used by the system and cannot be switched off', 'code');
-    var bal = Reports.accountBalances(Db.read('JournalLines'))[a.code] || 0;
+    var bal = summaryBalances_()[a.code] || 0;
     if (bal) throw Validate.coreError('E_VALIDATION', a.name + ' still has a balance of ' + Money.formatPaisa(bal) + '. Move it first.', 'code');
     env.tx.update('Accounts', a.id, { isActive: false });
     return { data: { code: a.code }, audit: { docType: 'ACCOUNT', docId: a.code, summary: 'Deactivated account ' + a.code + ' ' + a.name } };
   },
 
   'accounts.list': function () {
-    var bal = Reports.accountBalances(Db.read('JournalLines'));
+    var bal = summaryBalances_();
     return Db.read('Accounts').slice().sort(byCode_).map(function (a) { return Object.assign({}, a, { balancePaisa: bal[a.code] || 0 }); });
   },
 
@@ -897,7 +906,7 @@ var Actions = {
 
   'stock.valuation': function (p) {
     var acc = Validate.indexAccounts(Db.read('Accounts'));
-    return Reports.inventoryReconciliation(Db.read('JournalLines'), Db.read('StockMoves'), acc, Db.byKey('Items'), { asOf: p.asOf || Dates.karachiDate() });
+    return Reports.inventoryReconciliation(Db.readColumns('JournalLines', ['date', 'accountCode', 'brand', 'debitPaisa', 'creditPaisa']), Db.read('StockMoves'), acc, Db.byKey('Items'), { asOf: p.asOf || Dates.karachiDate() });
   },
 
   'jobs.completeBatch': function (p, env) {
@@ -1019,7 +1028,7 @@ var Actions = {
     var store = storeFor_(env, p);
     var cashCode = String(p.cashAccountCode || Db.settings().storeCashAccount || '1020');
     var acc = Validate.indexAccounts(Db.read('Accounts'));
-    var cash = Reports.accountLedger(Db.read('JournalLines'), acc, { accountCode: cashCode, to: date });
+    var cash = Reports.accountLedger(Db.readColumns('JournalLines', ['id', 'jeId', 'date', 'accountCode', 'brand', 'debitPaisa', 'creditPaisa']), acc, { accountCode: cashCode, to: date });
     var sales = Db.read('Sales').filter(function (x) { return x.date === date && x.status !== 'VOID' && (!store || x.store === store); });
     var ids = {};
     sales.forEach(function (x) { ids[x.id] = true; });
@@ -1154,7 +1163,7 @@ var Actions = {
   'journal.list': function (p) {
     var totals = {};
     var hits = {};
-    Db.read('JournalLines').forEach(function (l) {
+    Db.readColumns('JournalLines', ['jeId', 'accountCode', 'debitPaisa']).forEach(function (l) {
       totals[l.jeId] = (totals[l.jeId] || 0) + l.debitPaisa;
       if (p.accountCode && l.accountCode === String(p.accountCode)) hits[l.jeId] = true;
     });
@@ -1299,8 +1308,8 @@ var Actions = {
     ctx.journals = {};
     ctx.journals[jeId] = {
       journal: journal,
-      lines: Db.read('JournalLines').filter(function (l) { return l.jeId === jeId; }),
-      stockMoves: ctx.stockMoves.filter(function (m) { return m.jeId === jeId; }),
+      lines: Db.findRows('JournalLines', 'jeId', jeId),
+      stockMoves: Db.findRows('StockMoves', 'jeId', jeId),
     };
     ctx.bills = billsCtx_();
     ctx.invoices = Db.byKey('Invoices');
@@ -1316,7 +1325,7 @@ var Actions = {
     var accounts = Db.byKey('Accounts');
     return {
       journal: j,
-      lines: Db.read('JournalLines').filter(function (l) { return l.jeId === j.id; }).map(function (l) {
+      lines: Db.findRows('JournalLines', 'jeId', j.id).map(function (l) {
         return Object.assign({}, l, { accountName: accounts[l.accountCode] ? accounts[l.accountCode].name : '' });
       }),
     };

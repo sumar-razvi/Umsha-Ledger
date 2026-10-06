@@ -137,6 +137,8 @@ describe('dashboard.get (M10)', () => {
     const list = ok(gas.call(users.owner, 'kpiTargets.list', {}));
     const minCash = list.find((t) => t.kpi === 'minCash');
     ok(gas.call(users.owner, 'kpiTargets.upsert', Object.assign({}, minCash, { redAt: rs(100000000) })));
+    const change = ok(gas.call(users.owner, 'reports.auditLog', { q: 'minCash' }))[0];
+    assert.deepEqual([change.before.redAt, change.after.redAt], [0, rs(100000000)], 'the audit row keeps the old value');
     const t = ok(gas.call(users.owner, 'kpiTargets.upsert', { kpi: 'revenueTarget', brand: 'UMSHA', period: '2026-10', target: rs(600000) }));
     assert.equal(t.id, 'KT-013');
     const r = ok(gas.call(users.owner, 'dashboard.get', { tab: 'OVERVIEW', period: 'MTD', brand: 'UMSHA', compareTo: 'TARGET' }));

@@ -2718,7 +2718,6 @@ const MATRIX = {
   'journal.list': ['OFV', false],
   'ledger.account': ['OFV', false],
 
-  'stock.count.create': ['OFST', true],
   'stock.count.post': ['OFST', true],
   'stock.valuation': ['OFV', false],
   'stock.movements': ['OFSV', false],
@@ -2803,6 +2802,7 @@ function check(user, action, payload, lookups) {
 
 return {
   ROLES,
+  ROLE_LETTER,
   ROLE_LABEL,
   MATRIX,
   DASHBOARD_TABS,

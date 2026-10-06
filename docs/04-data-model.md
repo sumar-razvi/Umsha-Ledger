@@ -243,6 +243,8 @@ Pruned of rows older than 30 days by the nightly trigger (the one tab whose rows
 ## Performance notes for Claude Code
 
 - `JournalLines` will be the largest tab (≈ 5–15k rows/year). Reports read it once per request with `getDataRange().getValues()` and aggregate in memory. That is fine to ~200k rows.
-- Cache per-account balances by month in `CacheService` (6 h TTL, key `bal:<yyyymm>`), cleared on any post.
+- Account balances by month live in the `MonthlySummary` tab (kept in step by every write, rebuilt nightly) instead of a `bal:<yyyymm>` CacheService entry: it survives cache eviction and is checked for drift. The chart of accounts and the dashboard read balances from it. Dashboard results are cached in `CacheService` for 5 minutes, keyed by a data version that every write bumps.
+- As built (M9): appends read only the header row of the target tab, never its rows; the idempotency check reads only the `requestId` column and then the matching row; one entry's lines (`journal.get`, `journal.reverse`) are read as the block of rows that matches (`Db.findRows`); screens that need a few columns of every line use `Db.readColumns` (one contiguous block of columns). `npm run perf` builds ~20k journal lines through the real server code and reports time and cells read per screen.
+- M9 measurement (`npm run perf`, 20,025 lines from 3,048 documents; estimates, see README-deploy): every screen at or under about 1.4 s and every report under 3 s (targets 3 s / 8 s). The biggest change was the Sale write: from about 725k cells read (est. 4.4 s, over target) to 21k (0.1 s), because appends no longer read the tab they append to. Reports still read `JournalLines` whole (about 380k cells, est. 2–2.5 s).
 - Sheets cell limit is 10M cells; at ~20 columns we have headroom for decades.
 - Add an `Archive` strategy only if `JournalLines` exceeds 150k rows (P2).

@@ -18,7 +18,8 @@ In-house double-entry accounting and operations system for UMSHA (made-to-order 
 | `docs/08-test-scenarios.md` | Golden acceptance tests with exact expected journals |
 | `docs/09-open-decisions.md` | Questions for the family and tax advisor, with build defaults |
 | `docs/10-dashboard-kpis.md` | Dashboard tabs and 60+ KPI definitions with formulas |
-| `seed/` | Chart of accounts (with QuickBooks mapping), tax codes, settings |
+| `docs/USER-GUIDE.md` | Plain-English guide for store and studio staff |
+| `seed/` | Chart of accounts (with QuickBooks mapping), tax codes, settings, dashboard targets |
 
 Deployment: see [`README-deploy.md`](README-deploy.md).
 
@@ -30,5 +31,6 @@ Needs Node 20+. No dependencies.
 npm test        # node --test: all golden scenarios for completed milestones
 npm run build   # regenerate apps-script/Core.gs, Seed.gs and core.bundle.js (commit the result)
 npm run serve   # demo at http://localhost:8000: the real server code, in memory, "sign in as" any role
-npm run test:ui # browser test of index.html (needs Playwright with Chromium)
+npm run test:ui # browser test of index.html (needs Playwright with Chromium; CHART_JS=path/to/chart.umd.js to test real charts offline)
+npm run perf    # ~20k journal lines through the server code; time and cells read per screen (several minutes)
 ```
