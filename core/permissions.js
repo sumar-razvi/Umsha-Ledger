@@ -28,6 +28,7 @@ const MATRIX = {
   'accounts.upsert': ['OF', true],
   'accounts.deactivate': ['OF', true],
   'taxCodes.upsert': ['O', true],
+  'taxCodes.list': ['OF', false],
 
   'jobs.list': ['OFSV', false],
   'jobs.get': ['OFSV', false],
@@ -55,6 +56,9 @@ const MATRIX = {
   'bills.list': ['OFV', false],
   'bills.get': ['OFV', false],
   'karigar.logWork': ['OFS', true],
+  'vendors.list': ['OFSV', false],
+  'attachments.upload': ['OFST', true],
+  'attachments.get': ['OFSTV', false],
   'payments.pay': ['OF', true],
   'expenses.create': ['OFT', true],
   'payments.vendorAdvance': ['OF', true],

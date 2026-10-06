@@ -118,7 +118,7 @@ Quantities are decimals with up to 3 places (D-19); `core/inventory.js` does the
 
 ## Documents
 
-All documents share header fields: `id, date, contactId, brand, status, memo, jeId, attachmentIds, requestId, createdBy, createdAt`.
+All documents share header fields: `id, date, contactId, brand, status, memo, jeId, attachmentIds, requestId, createdBy, createdAt`. `attachmentIds` is a JSON list of `Attachments` IDs.
 status ∈ `DRAFT, POSTED, VOID` (VOID = reversed).
 
 ### `Invoices` (MTO delivery invoices and other customer invoices)
@@ -154,8 +154,10 @@ header + `direction, kind, moneyAccountCode, amountPaisa, whtPaisa, whtTaxCodeId
 - kind ∈ `CUSTOMER_ADVANCE, CUSTOMER_PAYMENT, VENDOR_PAYMENT, VENDOR_ADVANCE, REFUND, EXPENSE_PAID, DRAWINGS, TRANSFER, SETTLEMENT, TAX_PAYMENT, OTHER`
 
 ### `PaymentAllocations`
-`id, paymentId, docType, docId, amountPaisa`
-docType ∈ `INVOICE, BILL, JOB` (JOB for advances against an MTO order).
+`id, paymentId, docType, docId, amountPaisa, whtPaisa`
+docType ∈ `INVOICE, BILL, JOB` (JOB for advances against an MTO order). For bills, `amountPaisa` is what was settled (cash + WHT) and `whtPaisa` the tax withheld on it, so a reversed payment can give both back to the bill.
+
+**Quick expenses (R6)** are stored as a fully paid bill (`Bills` + `BillLines`, lineKind `EXPENSE`, balance 0) plus a `Payments` row of kind `EXPENSE_PAID` allocated to it. Both point to the same journal entry (docType `EXPENSE`, docId = the bill ID); reversing it voids both. **Drawings (R18)** are a `Payments` row of kind `DRAWINGS`. **Vendor advances** are `VENDOR_ADVANCE` payments; a bill paid from an advance credits `VENDOR_ADV` instead of cash.
 
 ### `StockMoves`
 `id, date, itemId, qty (signed), unitCostMicro, valuePaisa (signed), moveType, docType, docId, jobId, sourceMoveId, jeId, createdAt`

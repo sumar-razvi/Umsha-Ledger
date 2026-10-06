@@ -24,11 +24,16 @@ function seedDemo(gas, users) {
     return r.data;
   };
   const o = users.owner;
+  // Demo rates only (the docs/08 test fixtures). Real rates come from the tax advisor.
+  call(o, 'taxCodes.upsert', { id: 'WHT-GOODS-F', name: 'WHT goods - filer (demo rate)', kind: 'WHT', rateBps: 450, whtBase: 'EXCL_SALES_TAX', appliesTo: 'GOODS', vendorFilerStatus: 'FILER', effectiveFrom: '2025-07-01', isActive: true });
+  call(o, 'taxCodes.upsert', { id: 'WHT-SVC-F', name: 'WHT services - filer (demo rate)', kind: 'WHT', rateBps: 1000, whtBase: 'EXCL_SALES_TAX', appliesTo: 'SERVICES', vendorFilerStatus: 'FILER', effectiveFrom: '2025-07-01', isActive: true });
+  call(o, 'settings.update', { key: 'attachmentsFolderId', value: 'demo-attachments' });
   const ayesha = call(o, 'contacts.upsert', { kind: 'CUSTOMER', name: 'Ayesha Khan', phone: '0300 1234567', city: 'Karachi' }).contact;
   call(o, 'contacts.upsert', { kind: 'CUSTOMER', name: 'Sana Malik', phone: '0321 7654321', city: 'Lahore' });
-  call(o, 'contacts.upsert', { kind: 'VENDOR', vendorType: 'KARIGAR', name: 'Aslam (embroidery)' });
+  call(o, 'contacts.upsert', { kind: 'VENDOR', vendorType: 'KARIGAR', name: 'Aslam (embroidery)', filerStatus: 'FILER', whtTaxCodeId: 'WHT-SVC-F' });
   call(o, 'contacts.upsert', { kind: 'VENDOR', vendorType: 'KARIGAR', name: 'Rafiq (stitching)' });
-  const supplier = call(o, 'contacts.upsert', { kind: 'VENDOR', vendorType: 'SUPPLIER', name: 'Bolton Market Fabrics', strn: '32-77-8761-123-45' }).contact;
+  const supplier = call(o, 'contacts.upsert', { kind: 'VENDOR', vendorType: 'SUPPLIER', name: 'Bolton Market Fabrics', strn: '32-77-8761-123-45', filerStatus: 'FILER', whtTaxCodeId: 'WHT-GOODS-F' }).contact;
+  call(o, 'contacts.upsert', { kind: 'VENDOR', vendorType: 'SERVICE', name: 'Landlord' });
   call(o, 'contacts.upsert', { kind: 'FAMILY', name: 'Family member' });
   const fabric = call(o, 'items.upsert', { category: 'FABRIC', name: 'Silk organza', unit: 'M' }).item;
   const trim = call(o, 'items.upsert', { category: 'TRIM', name: 'Dabka', unit: 'G' }).item;

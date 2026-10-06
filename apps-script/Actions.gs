@@ -47,8 +47,27 @@ function linesWithClosing_() {
 
 var DOC_TABS = {
   BILL: 'Bills', INVOICE: 'Invoices', JOB: 'Jobs', JOURNAL: 'Journal', SALE: 'Sales', SALE_LINE: 'SaleLines',
-  PAYMENT: 'Payments', STOCK_COUNT: 'StockCounts', CASHUP: 'CashUps',
+  PAYMENT: 'Payments', STOCK_COUNT: 'StockCounts', CASHUP: 'CashUps', EXPENSE: 'Bills',
 };
+
+// Payments posted by a journal entry, with their allocations (for reversals).
+function paymentsByJe_(jeId) {
+  var out = {};
+  var pays = Db.read('Payments').filter(function (p) { return p.jeId === jeId && p.status !== 'VOID'; });
+  if (pays.length) {
+    out[jeId] = pays.map(function (p) {
+      return { payment: p, allocations: Db.read('PaymentAllocations').filter(function (a) { return a.paymentId === p.id; }) };
+    });
+  }
+  return out;
+}
+
+// Open / part-paid / paid, from a bill's balance.
+function billState_(b) {
+  if (b.status === 'VOID') return 'VOID';
+  if (!b.balancePaisa) return 'PAID';
+  return b.paidPaisa ? 'PART_PAID' : 'OPEN';
+}
 
 // Queue the rows of a posted entry: Journal, JournalLines, StockMoves,
 // ItemBalances and the docUpdates. Returns the new IDs.
@@ -108,7 +127,8 @@ function persistBill_(env, doc, jeId) {
   var brands = Object.keys(doc.grossByBrand || {});
   env.tx.append('Bills', [Object.assign(docHeader_(env, doc, jeId), {
     brand: brands.length === 1 ? brands[0] : 'SHARED', memo: doc.memo || '', vendorRef: doc.vendorRef, dueDate: doc.dueDate,
-    netPaisa: doc.netPaisa, taxPaisa: doc.taxPaisa, grossPaisa: doc.grossPaisa, paidPaisa: 0, whtPaisa: 0, balancePaisa: doc.balancePaisa,
+    netPaisa: doc.netPaisa, taxPaisa: doc.taxPaisa, grossPaisa: doc.grossPaisa, paidPaisa: doc.paidPaisa || 0, whtPaisa: doc.whtPaisa || 0,
+    balancePaisa: doc.balancePaisa,
   })]);
   env.tx.append('BillLines', doc.lines.map(function (l, i) { return Object.assign({ id: Ids.formatLineId(doc.id, i + 1), billId: doc.id }, l); }));
 }
@@ -120,7 +140,7 @@ function persistPayment_(env, doc, jeId, memo) {
     fxRate: doc.fxRate || '', reference: doc.reference || '',
   })]);
   env.tx.append('PaymentAllocations', (doc.allocations || []).map(function (a, i) {
-    return { id: Ids.formatLineId(doc.id, i + 1), paymentId: doc.id, docType: a.docType, docId: a.docId, amountPaisa: a.amountPaisa };
+    return { id: Ids.formatLineId(doc.id, i + 1), paymentId: doc.id, docType: a.docType, docId: a.docId, amountPaisa: a.amountPaisa, whtPaisa: a.whtPaisa || 0 };
   }));
 }
 
@@ -497,9 +517,19 @@ var Actions = {
     if (p.docType !== 'PAYMENT') throw Validate.coreError('E_VALIDATION', 'Receipts are for payments and invoices', 'docType');
     var pay = Db.get('Payments', p.docId);
     if (!pay) throw Validate.coreError('E_NOT_FOUND', 'Payment ' + p.docId + ' not found', 'docId');
-    var alloc = Db.read('PaymentAllocations').filter(function (a) { return a.paymentId === pay.id; })[0];
+    var allocs = Db.read('PaymentAllocations').filter(function (a) { return a.paymentId === pay.id; });
+    var alloc = allocs[0];
     var acct = Db.get('Accounts', pay.moneyAccountCode);
     var payment = Object.assign({}, pay, { moneyAccountName: acct ? acct.name : '' });
+    if (pay.direction === 'OUT') {
+      return Receipts.paymentVoucher({
+        settings: settings, payment: payment, contact: Db.get('Contacts', pay.contactId) || {},
+        allocations: allocs.filter(function (a) { return a.docType === 'BILL'; }).map(function (a) {
+          var b = Db.get('Bills', a.docId) || {};
+          return { docId: a.docId, vendorRef: b.vendorRef || '', amountPaisa: a.amountPaisa, whtPaisa: a.whtPaisa || 0 };
+        }),
+      });
+    }
     var args = { settings: settings, payment: payment, contact: Db.get('Contacts', pay.contactId) || {} };
     if (alloc && alloc.docType === 'JOB') {
       var job = Db.get('Jobs', alloc.docId);
@@ -577,6 +607,182 @@ var Actions = {
     };
   },
 
+  // ---------- purchases (M4) ----------
+
+  'bills.list': function (p) {
+    return Db.read('Bills').filter(function (b) {
+      var st = billState_(b);
+      return (!p.contactId || b.contactId === p.contactId) && (!p.from || b.date >= p.from) && (!p.to || b.date <= p.to) &&
+        (!p.state || (p.state === 'UNPAID' ? (st === 'OPEN' || st === 'PART_PAID') : st === p.state));
+    }).map(function (b) {
+      var c = Db.get('Contacts', b.contactId);
+      return Object.assign({}, b, { state: billState_(b), contactName: c ? c.name : '' });
+    }).sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : (a.id < b.id ? 1 : -1); });
+  },
+
+  'bills.get': function (p) {
+    var b = Db.get('Bills', p.id);
+    if (!b) throw Validate.coreError('E_NOT_FOUND', 'Bill ' + p.id + ' not found', 'id');
+    var ids = Array.isArray(b.attachmentIds) ? b.attachmentIds : [];
+    return {
+      bill: Object.assign({}, b, { state: billState_(b) }),
+      contact: Db.get('Contacts', b.contactId),
+      lines: Db.read('BillLines').filter(function (l) { return l.billId === b.id; }),
+      payments: Db.read('PaymentAllocations').filter(function (a) { return a.docType === 'BILL' && a.docId === b.id; }).map(function (a) {
+        return Object.assign({}, Db.get('Payments', a.paymentId) || {}, { allocatedPaisa: a.amountPaisa, allocatedWhtPaisa: a.whtPaisa || 0 });
+      }),
+      attachments: Db.read('Attachments').filter(function (x) { return ids.indexOf(x.id) >= 0 || (x.docType === 'BILL' && x.docId === b.id); }),
+    };
+  },
+
+  'vendors.list': function (p) {
+    var acc = Validate.indexAccounts(Db.read('Accounts'));
+    var lines = Db.read('JournalLines');
+    var owed = Reports.vendorBalances(lines, acc);
+    var advCode = acc.accountsBySystemKey.VENDOR_ADV.code;
+    var adv = {};
+    lines.forEach(function (l) { if (l.accountCode === advCode && l.contactId) adv[l.contactId] = (adv[l.contactId] || 0) + l.debitPaisa - l.creditPaisa; });
+    return Db.read('Contacts').filter(function (c) {
+      return (c.kind === 'VENDOR' || c.kind === 'BOTH') && (c.isActive || p.includeInactive) && (!p.vendorType || c.vendorType === p.vendorType);
+    }).map(function (c) { return Object.assign({}, c, { weOwePaisa: owed[c.id] || 0, advancePaisa: adv[c.id] || 0 }); });
+  },
+
+  'payments.pay': function (p, env) {
+    var ctx = loadCtx_({ contacts: true });
+    ctx.bills = billsCtx_();
+    var docId = env.tx.nextDocId('PAY', need_(p.date, 'date', 'Enter the date'));
+    var allocations = (p.allocations || []).map(function (a, i) {
+      if (a.docType && a.docType !== 'BILL') throw Validate.coreError('E_VALIDATION', 'Vendor payments are applied to bills', 'allocations[' + i + '].docType');
+      var out = { billId: a.docId || a.billId, amountPaisa: a.amountPaisa };
+      if (a.whtPaisa !== undefined && a.whtPaisa !== null && a.whtPaisa !== '') out.whtPaisa = a.whtPaisa;
+      return out;
+    });
+    var entry = Posting.payBills(Object.assign({}, p, { docId: docId, allocations: allocations }), ctx);
+    var ids = postEntry_(env, entry);
+    var doc = entry.doc;
+    var brands = {};
+    allocations.forEach(function (a) { brands[ctx.bills[a.billId].brand] = true; });
+    doc.brand = Object.keys(brands).length === 1 ? Object.keys(brands)[0] : 'SHARED';
+    persistPayment_(env, doc, ids.jeId, p.memo || doc.whtOverrideReason);
+    return {
+      data: { paymentId: docId, jeId: ids.jeId, amountPaisa: doc.amountPaisa, whtPaisa: doc.whtPaisa },
+      audit: { docType: 'PAYMENT', docId: docId, summary: 'Paid ' + Money.formatPaisa(doc.amountPaisa) + ' to ' + p.contactId + (doc.whtPaisa ? ', WHT ' + Money.formatPaisa(doc.whtPaisa) : '') + (doc.whtOverrideReason ? ' (WHT changed: ' + doc.whtOverrideReason + ')' : '') },
+    };
+  },
+
+  'payments.vendorAdvance': function (p, env) {
+    var ctx = loadCtx_({ contacts: true });
+    var docId = env.tx.nextDocId('PAY', need_(p.date, 'date', 'Enter the date'));
+    var entry = Posting.payVendorAdvance(Object.assign({}, p, { docId: docId }), ctx);
+    var ids = postEntry_(env, entry);
+    persistPayment_(env, entry.doc, ids.jeId, p.memo);
+    return { data: { paymentId: docId, jeId: ids.jeId }, audit: { docType: 'PAYMENT', docId: docId, summary: 'Advance ' + Money.formatPaisa(entry.doc.amountPaisa) + ' to ' + p.contactId } };
+  },
+
+  // Quick expense (R6) is kept as a paid bill plus its payment, both from one
+  // journal entry; "Personal / family" posts drawings (R18) instead.
+  'expenses.create': function (p, env) {
+    var ctx = loadCtx_({ contacts: true });
+    var date = need_(p.date, 'date', 'Enter the date');
+    if (p.isDrawings) {
+      var payId = env.tx.nextDocId('PAY', date);
+      var d = Posting.recordDrawings(Object.assign({}, p, { docId: payId }), ctx);
+      var dIds = postEntry_(env, d);
+      persistPayment_(env, d.doc, dIds.jeId, p.memo || p.description);
+      return { data: { paymentId: payId, jeId: dIds.jeId, isDrawings: true }, audit: { docType: 'PAYMENT', docId: payId, summary: 'Drawings ' + Money.formatPaisa(d.doc.amountPaisa) + ' for ' + p.contactId } };
+    }
+    var billId = env.tx.nextDocId('BILL', date);
+    var entry = Posting.createExpense(Object.assign({}, p, { docId: billId }), ctx);
+    var ids = postEntry_(env, entry);
+    var doc = entry.doc;
+    var byBrand = {};
+    doc.lines.forEach(function (l) { byBrand[l.brand] = (byBrand[l.brand] || 0) + l.netPaisa + l.taxPaisa; });
+    persistBill_(env, {
+      id: billId, date: date, contactId: doc.contactId, vendorRef: p.vendorRef || '', dueDate: date, memo: p.memo || '',
+      netPaisa: doc.netPaisa, taxPaisa: doc.taxPaisa, grossPaisa: doc.grossPaisa, paidPaisa: doc.grossPaisa, whtPaisa: doc.whtPaisa,
+      balancePaisa: 0, grossByBrand: byBrand,
+      lines: doc.lines.map(function (l) { return Object.assign({ lineKind: 'EXPENSE' }, l); }),
+    }, ids.jeId);
+    var payId2 = env.tx.nextDocId('PAY', date);
+    persistPayment_(env, {
+      id: payId2, date: date, contactId: doc.contactId, brand: Object.keys(byBrand).length === 1 ? Object.keys(byBrand)[0] : 'SHARED',
+      direction: 'OUT', kind: 'EXPENSE_PAID', moneyAccountCode: doc.moneyAccountCode, amountPaisa: doc.amountPaisa, whtPaisa: doc.whtPaisa,
+      whtTaxCodeId: doc.whtTaxCodeId, reference: p.reference || '',
+      allocations: [{ docType: 'BILL', docId: billId, amountPaisa: doc.grossPaisa, whtPaisa: doc.whtPaisa }],
+    }, ids.jeId, p.memo || (doc.lines[0] && doc.lines[0].description) || '');
+    return {
+      data: { billId: billId, paymentId: payId2, jeId: ids.jeId, amountPaisa: doc.amountPaisa, whtPaisa: doc.whtPaisa },
+      audit: { docType: 'EXPENSE', docId: billId, summary: 'Expense ' + Money.formatPaisa(doc.grossPaisa) + (doc.taxOverrideReason ? ' (tax changed: ' + doc.taxOverrideReason + ')' : '') },
+    };
+  },
+
+  'reports.apAgeing': function (p) {
+    var asOf = p.asOf || Dates.karachiDate();
+    var bills = Db.read('Bills').filter(function (b) { return b.status !== 'VOID'; });
+    var r = Reports.ageing(bills, { asOf: asOf });
+    r.rows.forEach(function (row) { var c = Db.get('Contacts', row.contactId); row.contactName = c ? c.name : row.contactId; });
+    return r;
+  },
+
+  'reports.arAgeing': function (p) {
+    var asOf = p.asOf || Dates.karachiDate();
+    var r = Reports.ageing(Db.read('Invoices').filter(function (i) { return i.status !== 'VOID'; }), { asOf: asOf });
+    r.rows.forEach(function (row) { var c = Db.get('Contacts', row.contactId); row.contactName = c ? c.name : row.contactId; });
+    return r;
+  },
+
+  'taxCodes.list': function () {
+    return Db.read('TaxCodes').slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : (a.effectiveFrom < b.effectiveFrom ? -1 : 1); });
+  },
+
+  // Effective-dated: the same effectiveFrom edits that version; a later one
+  // starts a new version and closes the previous one the day before.
+  'taxCodes.upsert': function (p, env) {
+    var t = Master.prepareTaxCode(p, Db.read('TaxCodes'));
+    var rows = Db.read('TaxCodes').filter(function (x) { return x.id === t.row.id; });
+    var same = rows.filter(function (x) { return x.effectiveFrom === t.row.effectiveFrom; })[0];
+    if (same) {
+      env.tx.updateWhere('TaxCodes', function (x) { return x.id === t.row.id && x.effectiveFrom === t.row.effectiveFrom; }, t.row);
+    } else {
+      rows.forEach(function (x) {
+        if (x.effectiveFrom < t.row.effectiveFrom && (!x.effectiveTo || x.effectiveTo >= t.row.effectiveFrom)) {
+          env.tx.updateWhere('TaxCodes', function (y) { return y.id === x.id && y.effectiveFrom === x.effectiveFrom; }, { effectiveTo: Dates.addDays(t.row.effectiveFrom, -1) });
+        }
+      });
+      env.tx.append('TaxCodes', [t.row]);
+    }
+    return { data: t.row, audit: { docType: 'TAX_CODE', docId: t.row.id, summary: 'Tax code ' + t.row.id + ' ' + (t.row.rateBps / 100) + '% from ' + t.row.effectiveFrom, before: same || '', after: t.row } };
+  },
+
+  // Photos of bills and receipts go to the attachments folder in Drive.
+  'attachments.upload': function (p, env) {
+    var folderId = Db.settings().attachmentsFolderId;
+    if (!folderId) throw Validate.coreError('E_VALIDATION', 'The Owner needs to set the attachments folder in Settings first', 'attachmentsFolderId');
+    var tab = { BILL: 'Bills', PAYMENT: 'Payments', INVOICE: 'Invoices', SALE: 'Sales' }[p.docType];
+    if (!tab) throw Validate.coreError('E_VALIDATION', 'Attachments go on bills, payments, invoices or sales', 'docType');
+    var doc = Db.get(tab, need_(p.docId, 'docId', 'Choose the document'));
+    if (!doc) throw Validate.coreError('E_NOT_FOUND', p.docType + ' ' + p.docId + ' not found', 'docId');
+    var mime = String(p.mimeType || '');
+    if (!/^image\/(jpeg|png|webp|heic)$|^application\/pdf$/.test(mime)) throw Validate.coreError('E_VALIDATION', 'Attach a photo or a PDF', 'mimeType');
+    var bytes = Utilities.base64Decode(need_(p.dataBase64, 'dataBase64', 'Choose a file'));
+    if (bytes.length > 5 * 1024 * 1024) throw Validate.coreError('E_VALIDATION', 'The file is larger than 5 MB', 'dataBase64');
+    var id = env.tx.nextDocId('ATT', env.today);
+    var name = (p.fileName || p.docId) .toString().replace(/[^\w.\- ]/g, '_').slice(0, 80);
+    var file = DriveApp.getFolderById(folderId).createFile(Utilities.newBlob(bytes, mime, id + ' ' + name));
+    env.tx.append('Attachments', [{ id: id, docType: p.docType, docId: doc.id, driveFileId: file.getId(), fileName: name, mimeType: mime, uploadedBy: env.user.email, uploadedAt: env.ts }]);
+    var list = Array.isArray(doc.attachmentIds) ? doc.attachmentIds.slice() : [];
+    list.push(id);
+    env.tx.update(tab, doc.id, { attachmentIds: list });
+    return { data: { attachmentId: id }, audit: { docType: p.docType, docId: doc.id, summary: 'Attached ' + name } };
+  },
+
+  'attachments.get': function (p) {
+    var a = Db.get('Attachments', p.id);
+    if (!a) throw Validate.coreError('E_NOT_FOUND', 'Attachment ' + p.id + ' not found', 'id');
+    var blob = DriveApp.getFileById(a.driveFileId).getBlob();
+    return { id: a.id, fileName: a.fileName, mimeType: a.mimeType, dataBase64: Utilities.base64Encode(blob.getBytes()) };
+  },
+
   // ---------- ledger ----------
 
   'journal.create': function (p, env) {
@@ -598,8 +804,9 @@ var Actions = {
       lines: Db.read('JournalLines').filter(function (l) { return l.jeId === jeId; }),
       stockMoves: ctx.stockMoves.filter(function (m) { return m.jeId === jeId; }),
     };
-    ctx.bills = Db.byKey('Bills');
+    ctx.bills = billsCtx_();
     ctx.invoices = Db.byKey('Invoices');
+    ctx.paymentsByJe = paymentsByJe_(jeId);
     var entry = Posting.reverseEntry({ date: p.date || env.today, jeId: jeId, reason: p.reason }, ctx);
     var ids = postEntry_(env, entry);
     return { data: { jeId: ids.jeId, reversesJeId: jeId }, audit: { docType: 'JOURNAL', docId: ids.jeId, summary: 'Reversed ' + jeId + ': ' + p.reason } };

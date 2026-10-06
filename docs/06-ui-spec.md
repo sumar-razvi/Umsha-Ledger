@@ -97,6 +97,7 @@ Invoice, receipt, sale receipt (80 mm thermal-friendly CSS option), customer sta
 - The page loads `core.bundle.js` (generated, identical to `Core.gs`) so money parsing/formatting, tax previews and permission checks in the browser use the same tested code as the server.
 - Writes go into a queue in `localStorage` with their `requestId` before they are sent; network failures and `E_BUSY` are retried with backoff (2 s doubling to 60 s), other errors are shown and dropped. The top bar shows `Saved` / `Saving…` / `Offline: n pending`.
 - Form rows wrap plain inputs in `<label>`; composite controls (pickers) use a `<div>`, because a label forwards clicks to its first control.
+- M4: Purchases (bills list + "Who we owe" ageing, new bill with stock/job/expense lines and live WHT preview, bill detail with photos, pay bills with per-bill WHT that can be changed only with a reason, quick expense with the Personal/family toggle, vendor advance), Vendors, Karigars (balances and "Log work"), and Tax codes in Settings. Store staff get a "Petty expense" tab limited to petty cash. Photos are downscaled on the phone (max 1600 px JPEG) before upload.
 - Not yet built screens show a "arrives in milestone Mx" page rather than being hidden, so each role's navigation matches the table above.
 
 ## WhatsApp

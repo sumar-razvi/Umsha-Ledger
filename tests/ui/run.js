@@ -151,6 +151,78 @@ async function noHorizontalScroll(page) {
     await store.page.goto(base + '#/je/' + advJe);
     await store.page.waitForSelector('text=Your role (Store) cannot do this');
 
+    // ---- M4: Finance enters a bill with a photo, pays it with WHT; drawings ----
+    const fin = await signInAs(browser, base, 'Sara', { width: 1280, height: 900 });
+    const fp = fin.page;
+    await fp.goto(base + '#/purchases/bills/new');
+    await fp.getByPlaceholder('Search vendor or karigar').fill('Bolton');
+    await fp.getByRole('button', { name: /Bolton Market Fabrics/ }).click();
+    await fp.locator('select[aria-label=Item]').selectOption({ label: 'Silk organza (M)' });
+    await fp.locator('input[aria-label=Quantity]').fill('10');
+    await fp.locator('input[aria-label="Cost each"]').fill('2,000');
+    await fp.locator('select[aria-label=Tax]').selectOption('ST-IN-STD');
+    await fp.getByPlaceholder('Their invoice number').fill('BMF-950');
+    await fp.waitForSelector('.kv >> text=Rs 23,600');
+    await fp.waitForSelector('.kv >> text=Rs 900'); // WHT preview: 4.5% of 20,000
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+    await fp.locator('input[type=file]').setInputFiles({ name: 'bill.png', mimeType: 'image/png', buffer: png });
+    await shot(fp, 'new-bill');
+    await fp.getByRole('button', { name: 'Save bill' }).click();
+    await fp.waitForSelector('h1:has-text("Bill BILL-")');
+    await fp.waitForSelector('text=Unpaid');
+    await fp.waitForSelector('button:has-text("bill.jpg")');
+    await shot(fp, 'bill-detail');
+    await fp.getByRole('link', { name: 'Pay', exact: true }).click();
+    await fp.waitForSelector('text=Pay the vendor');
+    await fp.waitForSelector('.kv >> text=Rs 22,700');
+    await shot(fp, 'pay-bills');
+    await fp.getByRole('button', { name: 'Pay', exact: true }).click();
+    await fp.waitForSelector('text=Payment voucher');
+    await fp.waitForSelector('text=Withholding tax deducted (WHT-GOODS-F)');
+    await shot(fp, 'voucher');
+    const bill950 = gas.rows('Bills').find((b) => b.vendorRef === 'BMF-950');
+    assert.deepEqual([bill950.balancePaisa, bill950.whtPaisa], [0, 90000]);
+
+    await fp.goto(base + '#/purchases/expense');
+    await fp.locator('input[aria-label="Amount"]').fill('5000');
+    await fp.getByRole('checkbox', { name: 'Personal / family' }).check();
+    await fp.getByPlaceholder('Which family member?').fill('Family');
+    await fp.getByRole('button', { name: /Family member/ }).click();
+    await fp.getByRole('button', { name: 'Save', exact: true }).click();
+    await fp.waitForSelector('text=Drawings recorded');
+    assert.ok(gas.rows('Payments').some((p) => p.kind === 'DRAWINGS' && p.amountPaisa === 500000));
+    await fp.goto(base + '#/purchases');
+    await fp.waitForSelector('text=Who we owe');
+    await shot(fp, 'purchases');
+    assert.deepEqual(fin.errors, [], 'browser errors: ' + fin.errors.join('\n'));
+
+    // ---- M4: Studio logs karigar work from the Karigars tab ----
+    const st = await signInAs(browser, base, 'Hina', phone);
+    await st.page.goto(base + '#/karigars');
+    await st.page.getByRole('button', { name: 'Log work' }).click();
+    const lw = st.page.getByRole('dialog', { name: 'Log karigar work' });
+    await lw.getByPlaceholder('Search karigar').fill('Rafiq');
+    await lw.getByRole('button', { name: /Rafiq/ }).click();
+    await lw.locator('select').first().selectOption({ index: 1 });
+    await lw.locator('input[type=number]').fill('5');
+    await lw.locator('input[aria-label="Rate per piece"]').fill('1000');
+    await lw.getByRole('button', { name: 'Log work' }).click();
+    await st.page.waitForSelector('tr:has-text("Rafiq") >> text=5,000.00');
+    await shot(st.page, 'karigars');
+    await noHorizontalScroll(st.page);
+
+    // ---- M4: Store pays a petty expense ----
+    const sp = (await signInAs(browser, base, 'Ali', phone)).page;
+    await sp.goto(base + '#/purchases/expense');
+    assert.deepEqual(await sp.locator('select').first().locator('option').allTextContents(), ['Petty cash']);
+    await sp.locator('input[aria-label="Amount"]').fill('750');
+    await sp.locator('select[aria-label=Account]').selectOption('6800');
+    await sp.getByPlaceholder('What was it for?').fill('Tea and biscuits');
+    await sp.getByRole('button', { name: 'Save', exact: true }).click();
+    await sp.waitForSelector('text=Expense saved');
+    await noHorizontalScroll(sp);
+    assert.ok(gas.rows('Bills').some((b) => b.grossPaisa === 75000 && b.balancePaisa === 0));
+
     console.log('ok - UI: book, advance, karigar, deliver, balance, receipts and journals (' + (SHOTS ? 'screenshots in ' + SHOTS : 'no screenshots') + ')');
   } catch (e) {
     console.error('not ok - UI test failed:', e.message);

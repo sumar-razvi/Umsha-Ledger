@@ -84,6 +84,24 @@ function invoiceDocument(args) {
   };
 }
 
+// A vendor payment voucher showing withholding tax (docs/06 Printable documents).
+// args: {settings, payment, contact, allocations: [{docId, vendorRef, amountPaisa, whtPaisa}]}
+function paymentVoucher(args) {
+  const p = args.payment;
+  const settings = args.settings || {};
+  const v = args.contact || {};
+  const lines = (args.allocations || []).map(function (a) {
+    return { label: 'Bill ' + a.docId + (a.vendorRef ? ' (' + a.vendorRef + ')' : ''), amountPaisa: a.amountPaisa, whtPaisa: a.whtPaisa || 0 };
+  });
+  const settled = lines.reduce(function (s, l) { return s + l.amountPaisa; }, 0);
+  return {
+    kind: 'VOUCHER', title: p.kind === 'VENDOR_ADVANCE' ? 'Advance voucher' : 'Payment voucher', number: p.id, date: p.date, company: company(settings),
+    to: { id: v.id || '', name: v.name || '', phone: v.phone || '', cnic: v.cnic || '', ntn: v.ntn || '', filerStatus: v.filerStatus || '' },
+    lines: lines, grossSettledPaisa: p.kind === 'VENDOR_ADVANCE' ? p.amountPaisa : settled, whtPaisa: p.whtPaisa || 0, amountPaisa: p.amountPaisa,
+    whtTaxCodeId: p.whtTaxCodeId || '', method: p.moneyAccountName || '', reference: p.reference || '',
+  };
+}
+
 if (typeof module !== 'undefined') module.exports = {
   DEFAULT_TEMPLATE,
   fillTemplate,
@@ -91,4 +109,5 @@ if (typeof module !== 'undefined') module.exports = {
   orderGross,
   paymentReceipt,
   invoiceDocument,
+  paymentVoucher,
 };

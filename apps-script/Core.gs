@@ -1191,6 +1191,34 @@ function prepareJobUpdate(job, existingLines, input, ctx) {
   return { fields: fields, newLines: added.lines, lineUpdates: lineUpdates };
 }
 
+// A TaxCodes row (one effective-dated version). Rates come from the tax
+// advisor; nothing in code assumes a rate.
+function prepareTaxCode(input, all) {
+  const id = text(input.id).toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9.\-]{1,30}$/.test(id)) fail('E_VALIDATION', 'Tax code ID: letters, numbers, dots and dashes', 'id');
+  const name = text(input.name);
+  if (!name) fail('E_VALIDATION', 'Enter a name', 'name');
+  const kind = oneOf(input.kind, ['SALES_OUTPUT', 'PURCHASE_INPUT', 'WHT', 'EXEMPT', 'ZERO'], 'kind', 'Kind');
+  const other = (all || []).filter(function (t) { return t.id === id; })[0];
+  if (other && other.kind !== kind) fail('E_VALIDATION', id + ' is a ' + other.kind + ' code; its kind cannot change', 'kind');
+  const rate = Number(input.rateBps);
+  if (!Number.isInteger(rate) || rate < 0 || rate > 10000) fail('E_VALIDATION', 'Rate must be 0 to 10000 basis points (18% = 1800)', 'rateBps');
+  if ((kind === 'EXEMPT' || kind === 'ZERO') && rate !== 0) fail('E_VALIDATION', 'Exempt and zero-rated codes have a rate of 0', 'rateBps');
+  const from = Validate.checkDate(input.effectiveFrom, 'effectiveFrom');
+  const to = isBlank(input.effectiveTo) ? '' : Validate.checkDate(input.effectiveTo, 'effectiveTo');
+  if (to && to < from) fail('E_VALIDATION', 'Effective to is before effective from', 'effectiveTo');
+  return {
+    row: {
+      id: id, name: name, kind: kind, rateBps: rate,
+      claimable: kind === 'PURCHASE_INPUT' ? Validate.isTrue(input.claimable) : false,
+      whtBase: kind === 'WHT' ? oneOf(input.whtBase || 'EXCL_SALES_TAX', ['GROSS', 'EXCL_SALES_TAX'], 'whtBase', 'WHT base') : '',
+      appliesTo: oneOf(input.appliesTo || 'ANY', ['GOODS', 'SERVICES', 'ANY'], 'appliesTo', 'Applies to'),
+      vendorFilerStatus: oneOf(input.vendorFilerStatus || 'ANY', ['FILER', 'NON_FILER', 'ANY'], 'vendorFilerStatus', 'Filer status'),
+      effectiveFrom: from, effectiveTo: to, isActive: isBlank(input.isActive) ? true : Validate.isTrue(input.isActive), notes: text(input.notes),
+    },
+  };
+}
+
 // User create/update (Owner only).
 function prepareUser(input, existing, all) {
   const merged = Object.assign({}, existing || {}, input);
@@ -1213,6 +1241,7 @@ return {
   prepareJob,
   prepareJobLines,
   prepareJobUpdate,
+  prepareTaxCode,
   prepareUser,
 };
 })();
@@ -1248,6 +1277,7 @@ const MATRIX = {
   'accounts.upsert': ['OF', true],
   'accounts.deactivate': ['OF', true],
   'taxCodes.upsert': ['O', true],
+  'taxCodes.list': ['OF', false],
 
   'jobs.list': ['OFSV', false],
   'jobs.get': ['OFSV', false],
@@ -1275,6 +1305,9 @@ const MATRIX = {
   'bills.list': ['OFV', false],
   'bills.get': ['OFV', false],
   'karigar.logWork': ['OFS', true],
+  'vendors.list': ['OFSV', false],
+  'attachments.upload': ['OFST', true],
+  'attachments.get': ['OFSTV', false],
   'payments.pay': ['OF', true],
   'expenses.create': ['OFT', true],
   'payments.vendorAdvance': ['OF', true],
@@ -1808,6 +1841,15 @@ function vendorWhtCode(ctx, vendor, input) {
   return code;
 }
 
+// WHT on paying `amount` of a bill (R5): base is the amount paid, or its
+// share excluding sales tax (base = round(paid x billNet / billGross)).
+// Shared with the page so its preview equals what will be posted.
+function whtOnBillPayment(bill, amount, code) {
+  if (!code || !code.rateBps) return 0;
+  const base = code.whtBase === 'GROSS' ? amount : Money.divRoundHalfEven(BigInt(amount) * BigInt(bill.netPaisa), bill.grossPaisa);
+  return Money.applyBps(base, code.rateBps);
+}
+
 function payBills(input, ctx) {
   const vendor = getContact(ctx, input.contactId);
   if (!Array.isArray(input.allocations) || !input.allocations.length) fail('E_VALIDATION', 'Choose at least one bill to pay', 'allocations');
@@ -1818,6 +1860,8 @@ function payBills(input, ctx) {
 
   const apByBrand = {};
   const whtByBrand = {};
+  const allocWht = [];
+  let overridden = false;
   let totalSettled = 0;
   let totalWht = 0;
   input.allocations.forEach(function (a, i) {
@@ -1835,11 +1879,14 @@ function payBills(input, ctx) {
     // TODO(decision-D-17): pro-rata by the bill's gross per brand.
     const before = splitByBrand(paid, bill.grossByBrand);
     const after = splitByBrand(paid + p, bill.grossByBrand);
-    let w = 0;
-    if (whtCode && whtCode.rateBps > 0) {
-      const base = whtCode.whtBase === 'GROSS' ? p : Money.divRoundHalfEven(BigInt(p) * BigInt(bill.netPaisa), bill.grossPaisa);
-      w = Money.applyBps(base, whtCode.rateBps);
+    let w = whtOnBillPayment(bill, p, whtCode);
+    if (!isBlank(a.whtPaisa) && a.whtPaisa !== w) {
+      if (isBlank(input.whtOverrideReason)) fail('E_TAX_OVERRIDE_NO_REASON', 'Give a reason for changing the withholding tax', 'whtOverrideReason');
+      w = nonNegativePaisa(a.whtPaisa, field + '.whtPaisa');
+      if (w > p) fail('E_VALIDATION', 'Withholding tax cannot be more than the amount settled', field + '.whtPaisa');
+      overridden = true;
     }
+    allocWht.push(w);
     const wSplit = splitByBrand(w, bill.grossByBrand);
     BRANDS.forEach(function (b) {
       addTo(apByBrand, b, (after[b] || 0) - (before[b] || 0));
@@ -1862,7 +1909,8 @@ function payBills(input, ctx) {
     id: input.docId || '', date: input.date, direction: 'OUT', kind: 'VENDOR_PAYMENT', contactId: vendor.id,
     moneyAccountCode: input.fromVendorAdvance ? '' : String(input.moneyAccountCode), fromVendorAdvance: !!input.fromVendorAdvance,
     amountPaisa: totalSettled - totalWht, whtPaisa: totalWht, whtTaxCodeId: whtCode ? whtCode.id : '', reference: input.reference || '',
-    allocations: input.allocations.map(function (a) { return { docType: 'BILL', docId: a.billId, amountPaisa: a.amountPaisa }; }),
+    whtOverrideReason: overridden ? input.whtOverrideReason : '',
+    allocations: input.allocations.map(function (a, i) { return { docType: 'BILL', docId: a.billId, amountPaisa: a.amountPaisa, whtPaisa: allocWht[i] }; }),
   };
   return finish(e, ctx);
 }
@@ -2578,10 +2626,28 @@ function reverseEntry(input, ctx) {
   });
 
   e.docUpdates.push({ docType: 'JOURNAL', id: input.jeId, fields: { reversedByJeId: NEW_JE_ID } });
-  // TODO(M2): payment reversals must also give back the amounts applied to bills/invoices.
   if (['PAYMENT', 'BILL', 'EXPENSE', 'INVOICE', 'SALE', 'STOCK_COUNT', 'CASHUP'].indexOf(j.docType) >= 0 && !isBlank(j.docId)) {
     e.docUpdates.push({ docType: j.docType, id: j.docId, fields: { status: 'VOID' } });
   }
+  // Payments posted by this entry are void, and what they paid off bills and
+  // invoices is owed again. ctx.paymentsByJe: {jeId: [{payment, allocations}]}.
+  ((ctx.paymentsByJe || {})[input.jeId] || []).forEach(function (pa) {
+    if (!(j.docType === 'PAYMENT' && pa.payment.id === j.docId)) {
+      e.docUpdates.push({ docType: 'PAYMENT', id: pa.payment.id, fields: { status: 'VOID' } });
+    }
+    (pa.allocations || []).forEach(function (a) {
+      if (a.docType === 'BILL') {
+        const bill = lookup(ctx.bills, a.docId, 'Bill', 'jeId');
+        if (bill.id === j.docId) return; // the bill itself is being voided (expense)
+        e.docUpdates.push({ docType: 'BILL', id: bill.id, fields: {
+          paidPaisa: (bill.paidPaisa || 0) - a.amountPaisa, whtPaisa: (bill.whtPaisa || 0) - (a.whtPaisa || 0), balancePaisa: (bill.balancePaisa || 0) + a.amountPaisa,
+        } });
+      } else if (a.docType === 'INVOICE') {
+        const inv = lookup(ctx.invoices, a.docId, 'Invoice', 'jeId');
+        e.docUpdates.push({ docType: 'INVOICE', id: inv.id, fields: { paidPaisa: (inv.paidPaisa || 0) - a.amountPaisa, balancePaisa: (inv.balancePaisa || 0) + a.amountPaisa } });
+      }
+    });
+  });
   if (j.docType === 'INVOICE' && orig.lines.length && orig.lines[0].jobId) {
     e.docUpdates.push({ docType: 'JOB', id: orig.lines[0].jobId, fields: { status: 'READY', deliveredDate: '', invoiceId: '' } });
   }
@@ -2678,6 +2744,7 @@ function openingStock(input, ctx) {
 return {
   NEW_JE_ID,
   findTaxCode,
+  whtOnBillPayment,
   exclusiveTax,
   inclusiveTax,
   splitByBrand,
@@ -2797,6 +2864,24 @@ function invoiceDocument(args) {
   };
 }
 
+// A vendor payment voucher showing withholding tax (docs/06 Printable documents).
+// args: {settings, payment, contact, allocations: [{docId, vendorRef, amountPaisa, whtPaisa}]}
+function paymentVoucher(args) {
+  const p = args.payment;
+  const settings = args.settings || {};
+  const v = args.contact || {};
+  const lines = (args.allocations || []).map(function (a) {
+    return { label: 'Bill ' + a.docId + (a.vendorRef ? ' (' + a.vendorRef + ')' : ''), amountPaisa: a.amountPaisa, whtPaisa: a.whtPaisa || 0 };
+  });
+  const settled = lines.reduce(function (s, l) { return s + l.amountPaisa; }, 0);
+  return {
+    kind: 'VOUCHER', title: p.kind === 'VENDOR_ADVANCE' ? 'Advance voucher' : 'Payment voucher', number: p.id, date: p.date, company: company(settings),
+    to: { id: v.id || '', name: v.name || '', phone: v.phone || '', cnic: v.cnic || '', ntn: v.ntn || '', filerStatus: v.filerStatus || '' },
+    lines: lines, grossSettledPaisa: p.kind === 'VENDOR_ADVANCE' ? p.amountPaisa : settled, whtPaisa: p.whtPaisa || 0, amountPaisa: p.amountPaisa,
+    whtTaxCodeId: p.whtTaxCodeId || '', method: p.moneyAccountName || '', reference: p.reference || '',
+  };
+}
+
 return {
   DEFAULT_TEMPLATE,
   fillTemplate,
@@ -2804,6 +2889,7 @@ return {
   orderGross,
   paymentReceipt,
   invoiceDocument,
+  paymentVoucher,
 };
 })();
 
@@ -3243,7 +3329,7 @@ const TABS = {
   Bills: { columns: DOC_HEADER.concat(['vendorRef', 'dueDate', 'netPaisa', 'taxPaisa', 'grossPaisa', 'paidPaisa', 'whtPaisa', 'balancePaisa']) },
   BillLines: { columns: ['id', 'billId', 'lineKind', 'accountCode', 'itemId', 'qty', 'unitCostPaisa', 'jobId', 'costComponent', 'brand', 'taxCodeId', 'netPaisa', 'taxPaisa', 'description'] },
   Payments: { columns: DOC_HEADER.concat(['direction', 'kind', 'moneyAccountCode', 'amountPaisa', 'whtPaisa', 'whtTaxCodeId', 'currency', 'fxAmount', 'fxRate', 'reference']) },
-  PaymentAllocations: { columns: ['id', 'paymentId', 'docType', 'docId', 'amountPaisa'] },
+  PaymentAllocations: { columns: ['id', 'paymentId', 'docType', 'docId', 'amountPaisa', 'whtPaisa'] },
   StockMoves: { appendOnly: true, columns: ['id', 'date', 'itemId', 'qty', 'unitCostMicro', 'valuePaisa', 'moveType', 'docType', 'docId', 'jobId', 'sourceMoveId', 'jeId', 'createdAt'] },
   StockCounts: { columns: ['id', 'date', 'location', 'status', 'jeId', 'createdBy', 'createdAt'] },
   StockCountLines: { columns: ['id', 'countId', 'itemId', 'systemQty', 'countedQty', 'diffQty', 'valuePaisa'] },

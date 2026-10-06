@@ -2,7 +2,7 @@
 // variants, FX, exchanges and the smaller rules (R14, R16, R20, R21).
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
-const { rs, expectJournal, Reports, Money } = require('./helpers/book.js');
+const { rs, expectJournal, Reports, Money, Posting } = require('./helpers/book.js');
 const { newScenarioBook, runThroughT12 } = require('./helpers/scenario.js');
 
 const code = (c) => (e) => e.code === c;
@@ -247,5 +247,47 @@ describe('banking, cash-up, stock count, tax and opening stock', () => {
     const { book, r } = runThroughT12();
     assert.throws(() => book.post('reverseEntry', { date: '2026-10-13', jeId: r.T02.a.jeId, reason: 'x' }), /Reverse the payments first/);
     assert.throws(() => book.post('reverseEntry', { date: '2026-10-13', jeId: r.T01.jeId }), /reason/);
+  });
+});
+
+describe('payment reversals and WHT overrides (M4)', () => {
+  test('reversing a bill payment makes the bill owed again, WHT included', () => {
+    const { book, r } = runThroughT12();
+    const pay = r.T05.paySupplier; // 118,000 settled, 4,500 WHT
+    const billId = pay.doc.allocations[0].docId;
+    assert.equal(book.bills[billId].balancePaisa, 0);
+    const rev = book.post('reverseEntry', { date: '2026-10-13', jeId: pay.jeId, reason: 'Paid from the wrong account' });
+    assert.deepEqual([book.bills[billId].paidPaisa, book.bills[billId].whtPaisa, book.bills[billId].balancePaisa], [0, 0, rs('118,000')]);
+    assert.equal(book.docOf(pay.doc.id).status, 'VOID');
+    assert.ok(rev.lines.length > 0);
+    // and it can be paid again, correctly
+    const again = book.post('payBills', { date: '2026-10-14', contactId: 'VEN-00001', moneyAccountCode: '1101', allocations: [{ billId, amountPaisa: rs('118,000') }] });
+    expectJournal(again.lines, [['Dr', '2010', 'SHARED', '118,000'], ['Cr', '1101', 'SHARED', '113,500'], ['Cr', '2210', 'SHARED', '4,500']]);
+  });
+
+  test('reversing a customer payment makes the invoice owed again', () => {
+    const { book, r } = runThroughT12();
+    const invId = r.T06.delivery.doc.id;
+    book.post('reverseEntry', { date: '2026-10-13', jeId: r.T06.payment.jeId, reason: 'Cheque bounced' });
+    assert.deepEqual([book.invoices[invId].paidPaisa, book.invoices[invId].balancePaisa], [0, rs('290,000')]);
+    assert.equal(Reports.customerBalances(book.lines, book.acc)['CUS-00001'].owesPaisa, rs('290,000'));
+  });
+
+  test('WHT can be changed with a reason; without one it is refused', () => {
+    const book = newScenarioBook();
+    const bill = book.post('karigarWork', { date: '2026-10-02', contactId: 'VEN-00003', jobId: 'JOB-2026-00001', costComponent: 'EMBROIDERY', pieces: 10, ratePaisa: rs('1,000') });
+    const base = { date: '2026-10-03', contactId: 'VEN-00003', moneyAccountCode: '1100' };
+    assert.throws(() => book.post('payBills', Object.assign({ allocations: [{ billId: bill.doc.id, amountPaisa: rs('10,000'), whtPaisa: rs('500') }] }, base)), code('E_TAX_OVERRIDE_NO_REASON'));
+    const p = book.post('payBills', Object.assign({ whtOverrideReason: 'Exemption certificate', allocations: [{ billId: bill.doc.id, amountPaisa: rs('10,000'), whtPaisa: rs('500') }] }, base));
+    expectJournal(p.lines, [['Dr', '2010', 'UMSHA', '10,000'], ['Cr', '1100', 'UMSHA', '9,500'], ['Cr', '2210', 'UMSHA', '500']]);
+    assert.equal(p.doc.allocations[0].whtPaisa, rs('500'));
+    assert.equal(p.doc.whtOverrideReason, 'Exemption certificate');
+  });
+
+  test('whtOnBillPayment matches what payBills posts', () => {
+    const bill = { netPaisa: rs('100,000'), grossPaisa: rs('118,000') };
+    assert.equal(Posting.whtOnBillPayment(bill, rs('59,000'), { rateBps: 450, whtBase: 'EXCL_SALES_TAX' }), rs('2,250'));
+    assert.equal(Posting.whtOnBillPayment(bill, rs('59,000'), { rateBps: 450, whtBase: 'GROSS' }), rs('2,655'));
+    assert.equal(Posting.whtOnBillPayment(bill, rs('59,000'), null), 0);
   });
 });

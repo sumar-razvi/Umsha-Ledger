@@ -104,6 +104,7 @@ class Book {
       sales: this.sales,
       stockMoves: this.stockMoves,
       journals: this.journals,
+      paymentsByJe: this.paymentsByJe(),
     });
   }
 
@@ -170,6 +171,16 @@ class Book {
       d.lines = (d.lines || []).map((l, i) => Object.assign({ id: Ids.formatLineId(d.id, i + 1) }, l));
       this.sales[d.id] = { sale: d, lines: d.lines };
     } else if (d.id) this.otherDocs[d.id] = d;
+  }
+
+  // Payments with allocations, by the journal entry that posted them.
+  paymentsByJe() {
+    const out = {};
+    Object.values(this.otherDocs).forEach((d) => {
+      if (!d.jeId || !Array.isArray(d.allocations) || !d.allocations.length) return;
+      (out[d.jeId] = out[d.jeId] || []).push({ payment: d, allocations: d.allocations });
+    });
+    return out;
   }
 
   docOf(id) {

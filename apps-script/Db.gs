@@ -109,9 +109,14 @@ var Db = (function () {
 
   // Write changed fields of an existing row, cell by cell.
   function updateRow(tab, id, fields) {
-    var t = load(tab);
     var row = byKey(tab)[id];
     if (!row) throw Validate.coreError('E_NOT_FOUND', tab + ' ' + id + ' not found');
+    updateRowObject(tab, row, fields);
+  }
+
+  function updateRowObject(tab, row, fields) {
+    var t = load(tab);
+    var id = row[Schema.keyOf(tab) || 'id'];
     var def = Schema.TABS[tab];
     Object.keys(fields).forEach(function (name) {
       var col = t.header.indexOf(name);
@@ -157,10 +162,17 @@ var Db = (function () {
         if (!Schema.TABS[tab]) throw Validate.coreError('E_INTERNAL', 'Unknown tab ' + tab);
         (tx.appends[tab] = tx.appends[tab] || []).push.apply(tx.appends[tab], objs);
       },
+      // Change an existing row. (A row added in this same transaction must be
+      // appended with its final values: updates are written before appends.)
       update: function (tab, id, fields) {
         if (!Schema.TABS[tab]) throw Validate.coreError('E_INTERNAL', 'Unknown tab ' + tab);
         var list = (tx.updates[tab] = tx.updates[tab] || []);
         list.push({ id: id, fields: fields });
+      },
+      // Update every row for which match(row) is true (tabs without a unique key).
+      updateWhere: function (tab, match, fields) {
+        if (!Schema.TABS[tab]) throw Validate.coreError('E_INTERNAL', 'Unknown tab ' + tab);
+        (tx.updates[tab] = tx.updates[tab] || []).push({ match: match, fields: fields });
       },
       // Insert or replace by key (for caches such as ItemBalances).
       upsert: function (tab, obj) {
@@ -200,7 +212,10 @@ var Db = (function () {
       appendRows('Sequences', fresh);
       return;
     }
-    (tx.updates[tab] || []).forEach(function (u) { updateRow(tab, u.id, u.fields); });
+    (tx.updates[tab] || []).forEach(function (u) {
+      if (u.match) load(tab).rows.filter(u.match).forEach(function (row) { updateRowObject(tab, row, u.fields); });
+      else updateRow(tab, u.id, u.fields);
+    });
     var ups = tx.upserts[tab];
     if (ups) {
       var idx = byKey(tab);

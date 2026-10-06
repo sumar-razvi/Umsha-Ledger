@@ -31,7 +31,7 @@ const TABS = {
   Bills: { columns: DOC_HEADER.concat(['vendorRef', 'dueDate', 'netPaisa', 'taxPaisa', 'grossPaisa', 'paidPaisa', 'whtPaisa', 'balancePaisa']) },
   BillLines: { columns: ['id', 'billId', 'lineKind', 'accountCode', 'itemId', 'qty', 'unitCostPaisa', 'jobId', 'costComponent', 'brand', 'taxCodeId', 'netPaisa', 'taxPaisa', 'description'] },
   Payments: { columns: DOC_HEADER.concat(['direction', 'kind', 'moneyAccountCode', 'amountPaisa', 'whtPaisa', 'whtTaxCodeId', 'currency', 'fxAmount', 'fxRate', 'reference']) },
-  PaymentAllocations: { columns: ['id', 'paymentId', 'docType', 'docId', 'amountPaisa'] },
+  PaymentAllocations: { columns: ['id', 'paymentId', 'docType', 'docId', 'amountPaisa', 'whtPaisa'] },
   StockMoves: { appendOnly: true, columns: ['id', 'date', 'itemId', 'qty', 'unitCostMicro', 'valuePaisa', 'moveType', 'docType', 'docId', 'jobId', 'sourceMoveId', 'jeId', 'createdAt'] },
   StockCounts: { columns: ['id', 'date', 'location', 'status', 'jeId', 'createdBy', 'createdAt'] },
   StockCountLines: { columns: ['id', 'countId', 'itemId', 'systemQty', 'countedQty', 'diffQty', 'valuePaisa'] },

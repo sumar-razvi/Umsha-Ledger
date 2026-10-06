@@ -426,6 +426,9 @@ const CONFIG = {
       if (o.allowNew !== false && (o.kind || 'CUSTOMER') === 'CUSTOMER') {
         results.appendChild(h('button', { type: 'button', onclick: () => newCustomerSheet(q, pick) }, h('span', {}, '+ New customer' + (q ? ' "' + q + '"' : '')), ''));
       }
+      if (o.allowNew !== false && o.kind === 'VENDOR' && can('contacts.upsert', { kind: 'VENDOR' })) {
+        results.appendChild(h('button', { type: 'button', onclick: () => newVendorSheet(q, pick, o.vendorType) }, h('span', {}, '+ New ' + (o.vendorType === 'KARIGAR' ? 'karigar' : 'vendor') + (q ? ' "' + q + '"' : '')), ''));
+      }
       results.classList.toggle('hidden', !results.childNodes.length);
     }
     input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 250); });
@@ -536,10 +539,10 @@ const CONFIG = {
 
   // ---------- shell ----------
   const NAV = {
-    OWNER: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/soon/store'], ['Purchases', '/soon/purchases'], ['Inventory', '/soon/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Settings', '/settings']],
-    FINANCE: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/soon/store'], ['Purchases', '/soon/purchases'], ['Inventory', '/soon/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Journals', '/journals']],
-    STUDIO: [['Orders', '/orders'], ['Customers', '/customers'], ['Inventory', '/soon/inventory'], ['Karigars', '/soon/karigars']],
-    STORE: [['New sale', '/soon/sale'], ['Returns', '/soon/returns'], ['Today', '/soon/today'], ['Cash-up', '/soon/cashup']],
+    OWNER: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/soon/store'], ['Purchases', '/purchases'], ['Inventory', '/soon/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Settings', '/settings']],
+    FINANCE: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/soon/store'], ['Purchases', '/purchases'], ['Inventory', '/soon/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Journals', '/journals']],
+    STUDIO: [['Orders', '/orders'], ['Customers', '/customers'], ['Inventory', '/soon/inventory'], ['Karigars', '/karigars']],
+    STORE: [['New sale', '/soon/sale'], ['Returns', '/soon/returns'], ['Today', '/soon/today'], ['Cash-up', '/soon/cashup'], ['Petty expense', '/purchases/expense']],
     VIEWER: [['Reports', '/soon/reports'], ['Journals', '/journals']],
   };
   function renderShell(path) {
@@ -1004,8 +1007,18 @@ const CONFIG = {
       doc.appendChild(h('div', { class: 'dochead' },
         h('div', {}, h('div', { class: 'co' }, r.company.name), r.company.ntn ? h('div', { class: 'small muted' }, 'NTN ' + r.company.ntn) : null, r.company.strn ? h('div', { class: 'small muted' }, 'STRN ' + r.company.strn) : null),
         h('div', { style: 'text-align:' + (thermal ? 'left' : 'right') }, h('h2', { style: 'margin:0' }, r.title), h('div', {}, r.number), h('div', { class: 'muted' }, fmtDate(r.date)))));
-      doc.appendChild(h('p', {}, h('span', { class: 'muted' }, r.kind === 'INVOICE' ? 'Bill to ' : 'Received from '), h('strong', {}, r.to.name || '—'), r.reference ? h('div', { class: 'muted small' }, r.reference) : null));
-      if (r.kind === 'INVOICE') {
+      doc.appendChild(h('p', {}, h('span', { class: 'muted' }, r.kind === 'INVOICE' ? 'Bill to ' : r.kind === 'VOUCHER' ? 'Paid to ' : 'Received from '), h('strong', {}, r.to.name || '—'), r.reference && r.kind !== 'VOUCHER' ? h('div', { class: 'muted small' }, r.reference) : null));
+      if (r.kind === 'VOUCHER') {
+        if (r.to.cnic || r.to.ntn) doc.appendChild(h('p', { class: 'small muted', style: 'margin-top:-8px' }, [r.to.cnic ? 'CNIC ' + r.to.cnic : '', r.to.ntn ? 'NTN ' + r.to.ntn : '', r.to.filerStatus ? (r.to.filerStatus === 'FILER' ? 'Filer' : 'Non-filer') : ''].filter(Boolean).join(' · ')));
+        if (r.lines.length) doc.appendChild(dataTable([{ key: 'label', label: 'Bill' }, { key: 'amountPaisa', label: 'Settled', money: true }, { key: 'whtPaisa', label: 'Tax withheld', money: true }], r.lines));
+        const kv = h('div', { class: 'kv', style: 'margin-top:12px' });
+        kv.append(h('span', {}, 'Amount settled'), h('span', { class: 'v' }, rs(r.grossSettledPaisa)),
+          h('span', {}, 'Withholding tax deducted' + (r.whtTaxCodeId ? ' (' + r.whtTaxCodeId + ')' : '')), h('span', { class: 'v' }, '− ' + rs(r.whtPaisa)),
+          h('span', { class: 'total' }, 'Paid'), h('span', { class: 'v total' }, rs(r.amountPaisa)));
+        if (r.method) kv.append(h('span', { class: 'muted small' }, 'From ' + r.method + (r.reference ? ' · ' + r.reference : '')), h('span'));
+        doc.appendChild(kv);
+        doc.appendChild(h('p', { class: 'small muted', style: 'margin-top:28px' }, 'Received by: ____________________'));
+      } else if (r.kind === 'INVOICE') {
         doc.appendChild(dataTable([{ key: 'label', label: 'Item' }, { key: 'qty', label: 'Qty', num: true }, { key: 'amountPaisa', label: 'Amount', money: true }], r.lines));
         const kv = h('div', { class: 'kv', style: 'margin-top:12px' });
         kv.append(h('span', {}, 'Subtotal'), h('span', { class: 'v' }, rs(r.netPaisa)), h('span', {}, 'Sales tax'), h('span', { class: 'v' }, rs(r.taxPaisa)),
@@ -1025,12 +1038,12 @@ const CONFIG = {
     }
     draw();
     view.appendChild(h('div', { class: 'actions noprint', style: 'margin-bottom:16px' },
-      h('a', { class: 'btn primary', href: r.whatsappUrl, target: '_blank', rel: 'noopener' }, 'Send on WhatsApp'),
+      r.whatsappUrl ? h('a', { class: 'btn primary', href: r.whatsappUrl, target: '_blank', rel: 'noopener' }, 'Send on WhatsApp') : null,
       h('button', { type: 'button', onclick: () => window.print() }, 'Print'),
       h('button', { type: 'button', onclick: () => { thermal = !thermal; draw(); } }, 'Receipt printer size'),
       history.length > 1 ? h('button', { type: 'button', class: 'ghost', onclick: () => history.back() }, 'Back') : null));
     view.appendChild(doc);
-    view.appendChild(h('p', { class: 'muted small noprint' }, 'WhatsApp opens with the message ready. To send the printed copy, use Print → Save as PDF and attach it.'));
+    if (r.whatsappUrl) view.appendChild(h('p', { class: 'muted small noprint' }, 'WhatsApp opens with the message ready. To send the printed copy, use Print → Save as PDF and attach it.'));
   });
 
   // ---------- customers ----------
@@ -1124,6 +1137,14 @@ const CONFIG = {
     });
     view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Company'), form));
 
+    const taxRows = state.taxCodes.slice();
+    const allTax = await api('taxCodes.list', {}).catch(() => taxRows);
+    view.appendChild(h('div', { class: 'card' }, h('div', { class: 'pagehead' }, h('h2', { style: 'flex:1;margin:0' }, 'Tax codes'), h('button', { type: 'button', onclick: () => taxSheet() }, 'Add tax code')),
+      h('p', { class: 'muted small' }, 'Rates come from your tax advisor. Changing a rate from a later date keeps the old rate for earlier documents.'),
+      dataTable([{ key: 'id', label: 'Code' }, { key: 'name', label: 'Name', opt: true }, { key: 'kind', label: 'Kind', opt: true },
+        { key: 'rateBps', label: 'Rate', num: true, render: (t) => pct(Number(t.rateBps)) }, { key: 'isActive', label: 'In use', render: (t) => (t.isActive ? 'Yes' : 'No') }, { key: 'effectiveFrom', label: 'From', render: (t) => fmtDate(t.effectiveFrom) + (t.effectiveTo ? ' to ' + fmtDate(t.effectiveTo) : '') }],
+      allTax, { onRow: (t) => taxSheet(t), csv: 'tax-codes', empty: 'No active tax codes. Add them with your tax advisor.' })));
+
     const periods = await api('periods.list', {});
     const months = [];
     for (let i = 0; i < 12; i++) { const d = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)) - 1 - i, 1)); months.push(d.toISOString().slice(0, 7)); }
@@ -1146,6 +1167,34 @@ const CONFIG = {
       h('button', { type: 'button', onclick: async () => { try { const r = await save('setup.run', {}, 'Run setup'); toast(Setup_summary(r)); } catch (e) { toast(e.message, 'bad'); } } }, 'Run setup (adds anything missing)'),
       h('button', { type: 'button', onclick: async () => { try { const r = await save('backup.now', {}, 'Backup'); toast('Backup saved: ' + r.name); } catch (e) { toast(e.message, 'bad'); } } }, 'Back up now'))));
   });
+  function taxSheet(t) {
+    const box = h('div');
+    const id = h('input', { value: t ? t.id : '', placeholder: 'e.g. WHT-SVC-F', disabled: !!t });
+    const name = h('input', { value: t ? t.name : '' });
+    const kind = h('select', { disabled: !!t }, [['SALES_OUTPUT', 'Sales tax on sales'], ['PURCHASE_INPUT', 'Sales tax on purchases'], ['WHT', 'Withholding tax'], ['EXEMPT', 'Exempt'], ['ZERO', 'Zero rated']].map(([v, l]) => h('option', { value: v, selected: t && t.kind === v }, l)));
+    const rate = h('input', { type: 'number', step: '0.01', min: '0', max: '100', value: t ? Number(t.rateBps) / 100 : '' });
+    const from = h('input', { type: 'date', value: t ? t.effectiveFrom : today() });
+    const claim = h('select', {}, h('option', { value: 'TRUE', selected: t && t.claimable }, 'Claimable'), h('option', { value: 'FALSE', selected: !(t && t.claimable) }, 'Not claimable'));
+    const base = h('select', {}, h('option', { value: 'EXCL_SALES_TAX' }, 'On the amount before sales tax'), h('option', { value: 'GROSS', selected: t && t.whtBase === 'GROSS' }, 'On the full amount'));
+    const applies = h('select', {}, ['ANY', 'GOODS', 'SERVICES'].map((v) => h('option', { value: v, selected: t && t.appliesTo === v }, v.charAt(0) + v.slice(1).toLowerCase())));
+    const filer = h('select', {}, [['ANY', 'Any vendor'], ['FILER', 'Filers'], ['NON_FILER', 'Non-filers']].map(([v, l]) => h('option', { value: v, selected: t && t.vendorFilerStatus === v }, l)));
+    const active = h('select', {}, h('option', { value: 'TRUE' }, 'In use'), h('option', { value: 'FALSE', selected: t && !t.isActive }, 'Not in use'));
+    sheet(t ? 'Tax code ' + t.id : 'New tax code', h('div', {}, box, h('div', { class: 'row' }, field('Code', id), field('Kind', kind)), field('Name', name),
+      h('div', { class: 'row' }, field('Rate %', rate), field('Effective from', from)), h('div', { class: 'row' }, field('Input tax', claim), field('Withholding base', base)),
+      h('div', { class: 'row' }, field('Applies to', applies), field('Vendors', filer)), field('Status', active),
+      h('p', { class: 'muted small' }, 'Same "effective from" date: edits this version. A later date: starts a new rate from that day.')), (close) => [
+      h('button', { type: 'button', onclick: close }, 'Cancel'),
+      h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+        try {
+          const bps = Math.round(Number(rate.value || 0) * 100);
+          const r = await submitting(e.currentTarget, box, () => save('taxCodes.upsert', { id: id.value, name: name.value, kind: kind.value, rateBps: bps, effectiveFrom: from.value,
+            claimable: claim.value, whtBase: base.value, appliesTo: applies.value, vendorFilerStatus: filer.value, isActive: active.value }, 'Tax code ' + id.value));
+          close();
+          if (r) { const me = await api('session.me', {}); state.taxCodes = me.taxCodes; render(); }
+        } catch (err) { /* shown */ }
+      } }, 'Save'),
+    ]);
+  }
   function Setup_summary(r) { return (r.created.length ? 'Created ' + r.created.length + ' tabs. ' : '') + r.seeded + ' seed rows added.'; }
   function userSheet(u) {
     const box = h('div');
@@ -1166,9 +1215,421 @@ const CONFIG = {
     ]);
   }
 
+
+  // ---------- purchases (M4) ----------
+  const BILL_STATE = { OPEN: 'Unpaid', PART_PAID: 'Part paid', PAID: 'Paid', VOID: 'Reversed' };
+  function billState(s) { return h('span', { class: 'status ' + ({ OPEN: 'READY', PART_PAID: 'IN_PRODUCTION', PAID: 'POSTED', VOID: 'VOID' }[s] || '') }, BILL_STATE[s] || s); }
+  function taxCodeAt(id, date) {
+    const rows = state.taxCodes.filter((t) => t.id === id && (!t.effectiveFrom || t.effectiveFrom <= date) && (!t.effectiveTo || date <= t.effectiveTo));
+    return rows.length ? rows[rows.length - 1] : null;
+  }
+  function whtCodeFor(vendor, date) {
+    const t = vendor && vendor.whtTaxCodeId ? taxCodeAt(vendor.whtTaxCodeId, date) : null;
+    return t ? { id: t.id, rateBps: Number(t.rateBps || 0), whtBase: t.whtBase || 'EXCL_SALES_TAX' } : null;
+  }
+  function expenseAccounts() {
+    const engine = ['AR', 'AP', 'CUSTOMER_ADV', 'VENDOR_ADV', 'WIP', 'INPUT_TAX', 'OUTPUT_TAX', 'WHT_PAYABLE', 'INV_FABRIC', 'INV_TRIMS', 'INV_PACKAGING', 'INV_FG', 'STORE_CREDIT', 'CARD_CLEARING', 'RETAINED_EARNINGS'];
+    return state.accounts.filter((a) => !a.isMoney && engine.indexOf(a.systemKey) === -1 && ['EXPENSE', 'COGS', 'OTHER', 'TAX', 'ASSET'].includes(a.type))
+      .sort((a, b) => (a.type === 'EXPENSE' ? 0 : 1) - (b.type === 'EXPENSE' ? 0 : 1) || (a.code < b.code ? -1 : 1));
+  }
+  function accountSelect(list, selected) {
+    return h('select', { 'aria-label': 'Account' }, h('option', { value: '' }, 'Choose…'), list.map((a) => h('option', { value: a.code, selected: a.code === selected }, a.name)));
+  }
+  function brandSelect(selected) {
+    return h('select', { 'aria-label': 'Brand' }, ['UMSHA', 'MIRAE', 'SHARED'].map((b) => h('option', { value: b, selected: b === selected }, b === 'MIRAE' ? 'Mirae' : b === 'SHARED' ? 'Shared' : 'UMSHA')));
+  }
+  function purchaseTaxSelect() {
+    return h('select', { 'aria-label': 'Tax' }, h('option', { value: '' }, 'No sales tax'),
+      state.taxCodes.filter((t) => ['PURCHASE_INPUT', 'EXEMPT', 'ZERO'].includes(t.kind)).map((t) => h('option', { value: t.id }, t.name)));
+  }
+  function pettyOnly() { return state.me.role === 'STORE'; }
+
+  // Photos: downscale on the phone, then upload as base64 (the server stores it in Drive).
+  function fileInput() {
+    return h('input', { type: 'file', accept: 'image/*,application/pdf', capture: 'environment', 'aria-label': 'Photo of the bill' });
+  }
+  async function fileToUpload(file) {
+    if (!file) return null;
+    if (file.type === 'application/pdf') return { mimeType: file.type, fileName: file.name, dataBase64: await blobToBase64(file) };
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const canvas = h('canvas', { width: Math.round(bmp.width * scale), height: Math.round(bmp.height * scale) });
+    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.8));
+    return { mimeType: 'image/jpeg', fileName: file.name.replace(/\.\w+$/, '') + '.jpg', dataBase64: await blobToBase64(blob) };
+  }
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result).split(',')[1]); r.onerror = reject; r.readAsDataURL(blob); });
+  }
+  async function attach(input, docType, docId) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+      const up = await fileToUpload(file);
+      await save('attachments.upload', Object.assign({ docType, docId }, up), 'Photo for ' + docId);
+    } catch (e) { toast('Saved, but the photo was not attached: ' + e.message, 'bad'); }
+  }
+
+  function newVendorSheet(prefill, onCreated, vendorType) {
+    const box = h('div');
+    const name = h('input', { value: prefill || '' });
+    const type = h('select', {}, [['SUPPLIER', 'Supplier (fabric, trims)'], ['KARIGAR', 'Karigar'], ['SERVICE', 'Service (dyer, courier, landlord)'], ['OTHER', 'Other']].map(([v, l]) => h('option', { value: v, selected: v === (vendorType || 'SUPPLIER') }, l)));
+    const phone = h('input', { type: 'tel', placeholder: '0300 1234567' });
+    const cnic = h('input', { placeholder: '42101-1234567-1' });
+    const ntn = h('input');
+    const strn = h('input', { placeholder: 'Only if registered for sales tax' });
+    const filer = h('select', {}, h('option', { value: '' }, 'Not known'), h('option', { value: 'FILER' }, 'Filer (on the ATL)'), h('option', { value: 'NON_FILER' }, 'Non-filer'));
+    const wht = h('select', {}, h('option', { value: '' }, 'No withholding tax'), state.taxCodes.filter((t) => t.kind === 'WHT').map((t) => h('option', { value: t.id }, t.name + ' (' + pct(Number(t.rateBps)) + ')')));
+    sheet('New ' + (vendorType === 'KARIGAR' ? 'karigar' : 'vendor'), h('div', {}, box, field('Name', name), field('Type', type), field('Mobile', phone),
+      h('div', { class: 'row' }, field('CNIC', cnic), field('NTN', ntn)), field('Sales tax registration (STRN)', strn),
+      h('div', { class: 'row' }, field('Filer status', filer), field('Withholding tax code', wht))), (close) => [
+      h('button', { type: 'button', onclick: close }, 'Cancel'),
+      h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+        try {
+          const r = await submitting(e.currentTarget, box, () => save('contacts.upsert', {
+            kind: 'VENDOR', name: name.value, vendorType: type.value, phone: phone.value, cnic: cnic.value, ntn: ntn.value, strn: strn.value, filerStatus: filer.value, whtTaxCodeId: wht.value,
+          }, 'New vendor ' + name.value));
+          if (!r) return;
+          close();
+          if (onCreated) onCreated(r.contact);
+        } catch (err) { /* shown */ }
+      } }, 'Save'),
+    ]);
+  }
+
+  route('/purchases', async (view, args, params) => {
+    const st = params.get('state') || 'UNPAID';
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Purchases'),
+      h('div', { class: 'actions' }, h('a', { class: 'btn primary', href: '#/purchases/bills/new' }, 'New bill'), can('payments.pay') ? h('a', { class: 'btn', href: '#/purchases/pay' }, 'Pay bills') : null,
+        h('a', { class: 'btn', href: '#/purchases/expense' }, 'Quick expense'), can('payments.vendorAdvance') ? h('a', { class: 'btn', href: '#/purchases/advance' }, 'Advance to vendor') : null,
+        h('a', { class: 'btn ghost', href: '#/vendors' }, 'Vendors'))));
+    view.appendChild(h('div', { class: 'chips' }, [['UNPAID', 'Unpaid'], ['PAID', 'Paid'], ['all', 'All']].map(([k, l]) => h('button', { type: 'button', class: 'chip' + (k === st ? ' on' : ''), onclick: () => go('#/purchases?state=' + k) }, l))));
+    const bills = await api('bills.list', st === 'all' ? {} : { state: st });
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'date', label: 'Date', render: (b) => fmtDate(b.date), csv: (b) => b.date },
+      { key: 'id', label: 'Bill', render: (b) => h('span', {}, b.id, b.vendorRef ? h('div', { class: 'muted small' }, b.vendorRef) : null) },
+      { key: 'contactName', label: 'Vendor' },
+      { key: 'dueDate', label: 'Due', opt: true, render: (b) => fmtDate(b.dueDate), csv: (b) => b.dueDate },
+      { key: 'grossPaisa', label: 'Amount', money: true }, { key: 'balancePaisa', label: 'Balance', money: true },
+      { key: 'state', label: 'Status', render: (b) => billState(b.state), csv: (b) => b.state },
+    ], bills, { onRow: (b) => go('#/purchases/bills/' + b.id), csv: 'bills', empty: 'No bills here.', rowClass: (b) => (b.balancePaisa > 0 && b.dueDate && b.dueDate < today() ? 'overdue' : '') })));
+    if (can('reports.apAgeing')) {
+      const age = await api('reports.apAgeing', { asOf: today() });
+      view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Who we owe'), dataTable([
+        { key: 'contactName', label: 'Vendor' }, { key: 'current', label: 'Not due', money: true }, { key: 'd1_30', label: '1–30 days', money: true },
+        { key: 'd31_60', label: '31–60', money: true, opt: true }, { key: 'd61_90', label: '61–90', money: true, opt: true }, { key: 'd90plus', label: '90+', money: true }, { key: 'total', label: 'Total', money: true },
+      ], age.rows, { foot: Object.assign({ contactName: 'Total' }, age.totals), csv: 'ap-ageing', empty: 'Nothing owed.' })));
+    }
+  });
+
+  route('/purchases/bills/new', async (view, args, params) => {
+    const studio = state.me.role === 'STUDIO';
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, studio ? 'Job cost bill' : 'New bill')));
+    const box = h('div');
+    let vendor = null;
+    const vendorPick = contactPicker({ kind: 'VENDOR', placeholder: 'Search vendor or karigar', onChange: (v) => { vendor = v; update(); } });
+    const ref = h('input', { placeholder: 'Their invoice number' });
+    const date = h('input', { type: 'date', value: today() });
+    const due = h('input', { type: 'date', value: Dates.addDays(today(), 30) });
+    const photo = fileInput();
+    const [items, jobs] = await Promise.all([api('items.search', { limit: 500 }), api('jobs.list', {})]);
+    const costJobs = jobs.filter((j) => !['CANCELLED', 'COMPLETED'].includes(j.status) && !(j.type === 'RTW_BATCH' && j.status === 'DELIVERED'));
+    const linesBox = h('div');
+    const rows = [];
+    const totals = h('div', { class: 'kv' });
+    function addLine(kind) {
+      const k = h('select', { 'aria-label': 'Line kind' }, (studio ? [['JOB', 'Job cost']] : [['STOCK', 'Stock item'], ['JOB', 'Job cost'], ['EXPENSE', 'Expense']]).map(([v, l]) => h('option', { value: v, selected: v === kind }, l)));
+      const item = h('select', { 'aria-label': 'Item' }, h('option', { value: '' }, 'Choose item'), items.map((i) => h('option', { value: i.id }, i.name + ' (' + i.unit + ')')));
+      const qty = h('input', { type: 'number', step: '0.001', min: '0', placeholder: 'Qty', 'aria-label': 'Quantity' });
+      const unit = moneyInput({ label: 'Cost each', placeholder: 'Cost each', onChange: update });
+      const job = h('select', { 'aria-label': 'Job' }, h('option', { value: '' }, 'Choose job'), costJobs.map((j) => h('option', { value: j.id }, j.id + ' · ' + j.title + (j.contactName ? ' · ' + j.contactName : ''))));
+      const comp = h('select', { 'aria-label': 'Cost type' }, Object.keys(COMPONENT_LABEL).map((c) => h('option', { value: c }, COMPONENT_LABEL[c])));
+      const acct = accountSelect(expenseAccounts());
+      const brand = brandSelect('SHARED');
+      acct.addEventListener('change', () => { const a = state.accountsByCode[acct.value]; if (a) brand.value = a.defaultBrand || 'SHARED'; });
+      const amount = moneyInput({ label: 'Amount', placeholder: 'Amount', onChange: update });
+      const tax = purchaseTaxSelect();
+      const desc = h('input', { placeholder: 'Description (optional)' });
+      const parts = h('div', { class: 'row' });
+      const row = { k, item, qty, unit, job, comp, acct, brand, amount, tax, desc };
+      const remove = h('button', { type: 'button', class: 'ghost', onclick: () => { rows.splice(rows.indexOf(row), 1); el.remove(); update(); } }, 'Remove line');
+      const el = h('div', { class: 'card', style: 'background:var(--bg)' }, field('Line', k), parts, h('div', { class: 'row' }, field('Sales tax', tax), field('Description', desc)), remove);
+      function layout() {
+        clear(parts);
+        if (k.value === 'STOCK') parts.append(field('Item', item), field('Quantity', qty), field('Cost each (before tax)', unit));
+        if (k.value === 'JOB') parts.append(field('Job', job), field('Cost type', comp), field('Amount (before tax)', amount));
+        if (k.value === 'EXPENSE') parts.append(field('Expense', acct), field('Brand', brand), field('Amount (before tax)', amount));
+        update();
+      }
+      [k, item, job, tax].forEach((x) => x.addEventListener('change', () => (x === k ? layout() : update())));
+      qty.addEventListener('input', update);
+      row.toLine = () => {
+        const base = { lineKind: k.value, taxCodeId: tax.value, description: desc.value };
+        if (k.value === 'STOCK') return Object.assign(base, { itemId: item.value, qty: qty.value, unitCostPaisa: unit.value() || 0 });
+        if (k.value === 'JOB') return Object.assign(base, { jobId: job.value, costComponent: comp.value, netPaisa: amount.value() || 0 });
+        return Object.assign(base, { accountCode: acct.value, brand: brand.value, netPaisa: amount.value() || 0 });
+      };
+      row.net = () => { try { const l = row.toLine(); return l.lineKind === 'STOCK' ? Inventory.qtyTimesPaisa(l.qty || 0, l.unitCostPaisa) : l.netPaisa; } catch (e) { return 0; } };
+      rows.push(row);
+      linesBox.appendChild(el);
+      layout();
+    }
+    function update() {
+      if (!totals) return;
+      const nets = rows.map((r) => r.net());
+      const codes = rows.map((r) => { const t = taxCodeAt(r.tax.value, date.value); return t ? { id: t.id, rateBps: Number(t.rateBps || 0) } : null; });
+      const taxes = Posting.exclusiveTax(nets, codes);
+      const net = nets.reduce((a, b) => a + b, 0);
+      const tax = taxes.reduce((a, b) => a + b, 0);
+      const code = whtCodeFor(vendor, date.value);
+      const wht = code ? Posting.whtOnBillPayment({ netPaisa: net, grossPaisa: net + tax || 1 }, net + tax, code) : 0;
+      clear(totals).append(h('span', {}, 'Before tax'), h('span', { class: 'v' }, rs(net)), h('span', {}, 'Sales tax'), h('span', { class: 'v' }, rs(tax)),
+        h('span', { class: 'total' }, 'Bill total'), h('span', { class: 'v total' }, rs(net + tax)));
+      if (code) totals.append(h('span', { class: 'muted' }, 'Tax to withhold when paid in full (' + pct(code.rateBps) + ')'), h('span', { class: 'v muted' }, rs(wht)),
+        h('span', { class: 'muted' }, 'So the vendor receives'), h('span', { class: 'v muted' }, rs(net + tax - wht)));
+    }
+    date.addEventListener('change', update);
+    const add = h('button', { type: 'button', class: 'ghost', onclick: () => addLine(studio ? 'JOB' : 'EXPENSE') }, '+ Another line');
+    view.appendChild(h('div', { class: 'card' }, box, field(studio ? 'Karigar or vendor' : 'Vendor', vendorPick),
+      h('div', { class: 'row' }, field('Their bill no.', ref), field('Bill date', date), field('Due', due)), field('Photo of the bill', photo)));
+    view.appendChild(linesBox);
+    addLine(studio ? 'JOB' : params.get('kind') || 'STOCK');
+    view.appendChild(add);
+    const submit = h('button', { type: 'button', class: 'primary' }, 'Save bill');
+    view.appendChild(h('div', { class: 'card' }, totals, h('div', { class: 'actions', style: 'margin-top:12px' }, h('a', { class: 'btn', href: '#/purchases' }, 'Cancel'), submit)));
+    update();
+    submit.addEventListener('click', async () => {
+      try {
+        const r = await submitting(submit, box, () => save('bills.create', {
+          contactId: vendor ? vendor.id : '', vendorRef: ref.value, date: date.value, dueDate: due.value, lines: rows.map((x) => x.toLine()),
+        }, 'Bill ' + (ref.value || '')));
+        if (!r) return;
+        await attach(photo, 'BILL', r.billId);
+        toast('Bill ' + r.billId + ' saved: ' + rs(r.grossPaisa));
+        go(studio ? '#/karigars' : '#/purchases/bills/' + r.billId);
+      } catch (e) { box.scrollIntoView(); }
+    });
+  });
+
+  route('/purchases/bills/:id', async (view, [id]) => {
+    const d = await api('bills.get', { id });
+    const b = d.bill;
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Bill ' + b.id, ' ', billState(b.state)),
+      b.balancePaisa > 0 && can('payments.pay') ? h('a', { class: 'btn primary', href: '#/purchases/pay?vendor=' + b.contactId + '&bill=' + b.id }, 'Pay') : null,
+      b.jeId && can('journal.get') ? h('a', { class: 'btn', href: '#/je/' + b.jeId }, 'Journal entry') : null));
+    view.appendChild(h('p', { class: 'muted' }, d.contact ? h('strong', {}, d.contact.name) : '', b.vendorRef ? ' · their ref ' + b.vendorRef : '', ' · ', fmtDate(b.date), b.dueDate ? ' · due ' + fmtDate(b.dueDate) : '', b.memo ? ' · ' + b.memo : ''));
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'lineKind', label: 'Line', render: (l) => ({ STOCK: 'Stock', JOB: 'Job cost', EXPENSE: 'Expense' }[l.lineKind]) },
+      { key: 'what', label: 'For', render: (l) => (l.lineKind === 'STOCK' ? l.itemId + ' × ' + l.qty : l.lineKind === 'JOB' ? l.jobId + ' · ' + (COMPONENT_LABEL[l.costComponent] || '') : (state.accountsByCode[l.accountCode] || {}).name || l.accountCode), csv: (l) => l.itemId || l.jobId || l.accountCode },
+      { key: 'brand', label: 'Brand', render: (l) => brandPill(l.brand), csv: (l) => l.brand },
+      { key: 'netPaisa', label: 'Before tax', money: true }, { key: 'taxPaisa', label: 'Tax', money: true },
+    ], d.lines)));
+    const kv = h('div', { class: 'kv' });
+    kv.append(h('span', { class: 'total' }, 'Bill total'), h('span', { class: 'v total' }, rs(b.grossPaisa)), h('span', {}, 'Settled'), h('span', { class: 'v' }, rs(b.paidPaisa)),
+      h('span', { class: 'muted' }, 'of which tax withheld'), h('span', { class: 'v muted' }, rs(b.whtPaisa)), h('span', { class: 'total' }, 'Balance'), h('span', { class: 'v total' }, rs(b.balancePaisa)));
+    const pays = h('ul', { class: 'timeline' });
+    d.payments.forEach((p) => pays.appendChild(h('li', {}, h('span', { class: 'when' }, fmtDate(p.date)),
+      h('span', { class: 'what' }, h('a', { href: '#/receipts/PAYMENT/' + p.id }, p.id), p.status === 'VOID' ? ' (reversed)' : ''), h('span', { class: 'small num' }, rs(p.allocatedPaisa)))));
+    const att = h('div', { class: 'actions' });
+    d.attachments.forEach((a) => att.appendChild(h('button', { type: 'button', onclick: () => showAttachment(a.id) }, a.fileName || a.id)));
+    const photo = fileInput();
+    view.appendChild(h('div', { class: 'grid2' }, h('div', { class: 'card' }, h('h2', {}, 'Money'), kv, d.payments.length ? h('h3', { style: 'margin-top:16px' }, 'Payments') : null, pays),
+      h('div', { class: 'card' }, h('h2', {}, 'Attachments'), d.attachments.length ? att : h('p', { class: 'muted' }, 'No photo yet.'),
+        b.status !== 'VOID' && can('attachments.upload') ? h('div', { style: 'margin-top:12px' }, field('Add a photo', photo), h('button', { type: 'button', onclick: async () => { await attach(photo, 'BILL', b.id); render(); } }, 'Upload')) : null)));
+  });
+
+  async function showAttachment(id) {
+    const a = await api('attachments.get', { id });
+    const url = 'data:' + a.mimeType + ';base64,' + a.dataBase64;
+    if (a.mimeType === 'application/pdf') {
+      const bin = atob(a.dataBase64); const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      window.open(URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })), '_blank');
+      return;
+    }
+    sheet(a.fileName || a.id, h('img', { src: url, alt: a.fileName || 'Attachment', style: 'width:100%;border-radius:8px' }), (close) => [h('button', { type: 'button', onclick: close }, 'Close')]);
+  }
+
+  route('/purchases/pay', async (view, args, params) => {
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Pay bills')));
+    const box = h('div');
+    const date = h('input', { type: 'date', value: today() });
+    const account = moneyAccountSelect('1100');
+    const reference = h('input', { placeholder: 'Cheque no. or transfer ref' });
+    const billsBox = h('div');
+    const summary = h('div', { class: 'kv' });
+    const reason = h('input', { placeholder: 'Only if you changed the tax: why?' });
+    let vendor = null;
+    let rows = [];
+    const preselect = params.get('bill');
+    const picker = contactPicker({ kind: 'VENDOR', allowNew: false, placeholder: 'Search vendor or karigar', onChange: (v) => { vendor = v; loadBills(); } });
+    async function loadBills() {
+      clear(billsBox); rows = []; updateSummary();
+      if (!vendor) return;
+      const bills = await api('bills.list', { contactId: vendor.id, state: 'UNPAID' });
+      if (!bills.length) { billsBox.appendChild(h('div', { class: 'empty' }, 'Nothing owed to ' + vendor.name + '.')); return; }
+      bills.forEach((b) => {
+        const tick = h('input', { type: 'checkbox', checked: !preselect || preselect === b.id, style: 'width:22px;min-height:22px', 'aria-label': 'Pay ' + b.id });
+        const amount = moneyInput({ label: 'Amount for ' + b.id, value: b.balancePaisa, onChange: () => r.autoWht() });
+        const wht = moneyInput({ label: 'Tax withheld on ' + b.id, onChange: () => { r.whtTouched = true; updateSummary(); } });
+        const r = { bill: b, tick, amount, wht, whtTouched: false };
+        r.autoWht = () => { if (!r.whtTouched) { let a = 0; try { a = amount.value() || 0; } catch (e) { a = 0; } wht.set(Posting.whtOnBillPayment(b, a, whtCodeFor(vendor, date.value))); } updateSummary(); };
+        tick.addEventListener('change', updateSummary);
+        rows.push(r);
+        billsBox.appendChild(h('div', { class: 'card', style: 'background:var(--bg)' },
+          h('div', { class: 'kv' }, h('label', { style: 'display:flex;gap:10px;align-items:center' }, tick, h('span', {}, h('strong', {}, b.id), b.vendorRef ? ' · ' + b.vendorRef : '', h('div', { class: 'muted small' }, fmtDate(b.date) + (b.dueDate ? ' · due ' + fmtDate(b.dueDate) : '')))),
+            h('span', { class: 'v' }, 'owed ' + rs(b.balancePaisa))),
+          h('div', { class: 'row', style: 'margin-top:8px' }, field('Paying now', amount), field('Tax withheld', wht))));
+        r.autoWht();
+      });
+    }
+    function chosen() { return rows.filter((r) => r.tick.checked); }
+    function updateSummary() {
+      let settled = 0; let w = 0;
+      chosen().forEach((r) => { try { settled += r.amount.value() || 0; w += r.wht.value() || 0; } catch (e) { /* invalid */ } });
+      const code = whtCodeFor(vendor, date.value);
+      clear(summary).append(h('span', {}, 'Settling'), h('span', { class: 'v' }, rs(settled)),
+        h('span', {}, 'Tax withheld' + (code ? ' (' + code.id + ', ' + pct(code.rateBps) + ')' : vendor ? ' (no tax code for this vendor)' : '')), h('span', { class: 'v' }, '− ' + rs(w)),
+        h('span', { class: 'total' }, 'Pay the vendor'), h('span', { class: 'v total' }, rs(settled - w)));
+    }
+    date.addEventListener('change', () => rows.forEach((r) => r.autoWht()));
+    const submit = h('button', { type: 'button', class: 'primary' }, 'Pay');
+    view.appendChild(h('div', { class: 'card' }, box, field('Vendor', picker), billsBox));
+    view.appendChild(h('div', { class: 'card' }, h('div', { class: 'row' }, field('Date', date), field('Paid from', account), field('Reference', reference)), summary,
+      field('Reason for changing the tax', reason), h('div', { class: 'actions' }, submit)));
+    updateSummary();
+    if (params.get('vendor')) {
+      try { const v = await api('contacts.get', { id: params.get('vendor') }); vendor = v; clear(picker); picker.appendChild(h('div', { class: 'chosen' }, h('strong', {}, v.name))); loadBills(); } catch (e) { /* ignore */ }
+    }
+    submit.addEventListener('click', async () => {
+      try {
+        const allocations = chosen().map((r) => {
+          const a = { docType: 'BILL', docId: r.bill.id, amountPaisa: r.amount.value() };
+          if (r.whtTouched) a.whtPaisa = r.wht.value() || 0;
+          return a;
+        });
+        const res = await submitting(submit, box, () => save('payments.pay', {
+          contactId: vendor ? vendor.id : '', date: date.value, moneyAccountCode: account.value, reference: reference.value, allocations, whtOverrideReason: reason.value,
+        }, 'Payment to ' + (vendor ? vendor.name : '')));
+        if (res) { toast('Paid ' + rs(res.amountPaisa) + (res.whtPaisa ? ', tax withheld ' + rs(res.whtPaisa) : '')); go('#/receipts/PAYMENT/' + res.paymentId); }
+      } catch (e) { box.scrollIntoView(); }
+    });
+  });
+
+  route('/purchases/expense', async (view) => {
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Quick expense')));
+    const box = h('div');
+    const date = h('input', { type: 'date', value: today() });
+    const petty = state.accounts.filter((a) => a.moneyKind === 'PETTY');
+    const account = pettyOnly() ? h('select', {}, petty.map((a) => h('option', { value: a.code }, a.name))) : moneyAccountSelect('1030');
+    const personal = h('input', { type: 'checkbox', style: 'width:22px;min-height:22px', 'aria-label': 'Personal / family' });
+    const family = contactPicker({ kind: 'FAMILY', allowNew: false, placeholder: 'Which family member?' });
+    const acct = accountSelect(expenseAccounts());
+    const brand = brandSelect(pettyOnly() ? 'MIRAE' : 'SHARED');
+    acct.addEventListener('change', () => { const a = state.accountsByCode[acct.value]; if (a && !pettyOnly()) brand.value = a.defaultBrand || 'SHARED'; });
+    const amount = moneyInput({ label: 'Amount' });
+    const tax = purchaseTaxSelect();
+    let vendor = null;
+    const vendorPick = contactPicker({ kind: 'VENDOR', allowNew: false, placeholder: 'Optional', onChange: (v) => { vendor = v; } });
+    const note = h('input', { placeholder: 'What was it for?' });
+    const photo = fileInput();
+    const business = h('div', {}, h('div', { class: 'row' }, field('What kind of expense', acct), field('Brand', brand)), h('div', { class: 'row' }, field('Sales tax on the receipt', tax), field('Paid to (vendor)', vendorPick)));
+    const fam = h('div', { class: 'hidden' }, h('div', { class: 'notice' }, 'Personal and family payments are recorded as owner drawings. They never appear as a business expense.'), field('Family member', family));
+    const canDraw = can('expenses.create', { isDrawings: true, moneyAccountCode: '1100' }) && state.me.role !== 'STORE';
+    personal.addEventListener('change', () => { business.classList.toggle('hidden', personal.checked); fam.classList.toggle('hidden', !personal.checked); });
+    const submit = h('button', { type: 'button', class: 'primary' }, 'Save');
+    view.appendChild(h('div', { class: 'card' }, box, h('div', { class: 'row' }, field('Date', date), field('Paid from', account)), field('Amount', amount),
+      canDraw ? h('label', { style: 'display:flex;gap:10px;align-items:center;margin-bottom:12px' }, personal, h('span', {}, 'Personal / family (not a business expense)')) : null,
+      business, fam, field('Note', note), field('Photo of the receipt', photo), h('div', { class: 'actions' }, submit)));
+    submit.addEventListener('click', async () => {
+      try {
+        let payload;
+        if (personal.checked) {
+          const f = family.value();
+          payload = { isDrawings: true, date: date.value, moneyAccountCode: account.value, contactId: f ? f.id : '', amountPaisa: amount.value(), memo: note.value };
+        } else {
+          payload = { date: date.value, moneyAccountCode: account.value, contactId: vendor ? vendor.id : '', memo: note.value,
+            lines: [{ accountCode: acct.value, brand: brand.value, netPaisa: amount.value() || 0, taxCodeId: tax.value, description: note.value }] };
+        }
+        const r = await submitting(submit, box, () => save('expenses.create', payload, personal.checked ? 'Drawings' : 'Expense ' + note.value));
+        if (!r) return;
+        if (r.billId) await attach(photo, 'BILL', r.billId);
+        toast(personal.checked ? 'Drawings recorded' : 'Expense saved' + (r.whtPaisa ? ', tax withheld ' + rs(r.whtPaisa) : ''));
+        go(pettyOnly() ? '#/purchases/expense' : '#/purchases?state=PAID');
+        if (pettyOnly()) render();
+      } catch (e) { box.scrollIntoView(); }
+    });
+  });
+
+  route('/purchases/advance', async (view) => {
+    view.appendChild(h('h1', {}, 'Advance to a vendor or karigar'));
+    const box = h('div');
+    const picker = contactPicker({ kind: 'VENDOR', allowNew: false, placeholder: 'Search vendor or karigar' });
+    const amount = moneyInput({ label: 'Amount' });
+    const brand = brandSelect('UMSHA');
+    const date = h('input', { type: 'date', value: today() });
+    const account = moneyAccountSelect('1100');
+    const reference = h('input');
+    const submit = h('button', { type: 'button', class: 'primary' }, 'Pay advance');
+    view.appendChild(h('div', { class: 'card' }, box, field('Paid to', picker), h('div', { class: 'row' }, field('Amount', amount), field('For brand', brand)),
+      h('div', { class: 'row' }, field('Date', date), field('Paid from', account), field('Reference', reference)),
+      h('p', { class: 'muted small' }, 'Later, when their bill comes in, pay it "from advance" to use this up.'), h('div', { class: 'actions' }, submit)));
+    submit.addEventListener('click', async () => {
+      try {
+        const v = picker.value();
+        const r = await submitting(submit, box, () => save('payments.vendorAdvance', { contactId: v ? v.id : '', amountPaisa: amount.value(), brand: brand.value, date: date.value, moneyAccountCode: account.value, reference: reference.value }, 'Vendor advance'));
+        if (r) go('#/receipts/PAYMENT/' + r.paymentId);
+      } catch (e) { /* shown */ }
+    });
+  });
+
+  route('/vendors', async (view) => {
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Vendors'), h('button', { type: 'button', class: 'primary', onclick: () => newVendorSheet('', () => render()) }, 'New vendor')));
+    const list = await api('vendors.list', {});
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'name', label: 'Name' }, { key: 'vendorType', label: 'Type', render: (v) => ({ SUPPLIER: 'Supplier', KARIGAR: 'Karigar', SERVICE: 'Service', OTHER: 'Other' }[v.vendorType] || '') },
+      { key: 'filerStatus', label: 'Filer', opt: true, render: (v) => ({ FILER: 'Filer', NON_FILER: 'Non-filer' }[v.filerStatus] || '') },
+      { key: 'weOwePaisa', label: 'We owe', money: true }, { key: 'advancePaisa', label: 'Advance paid', money: true, opt: true },
+    ], list, { onRow: (v) => go('#/purchases/pay?vendor=' + v.id), csv: 'vendors', foot: { name: 'Total', weOwePaisa: list.reduce((s, v) => s + v.weOwePaisa, 0), advancePaisa: list.reduce((s, v) => s + v.advancePaisa, 0) } })));
+  });
+
+  route('/karigars', async (view) => {
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Karigars'),
+      h('button', { type: 'button', class: 'primary', onclick: () => logWorkSheet() }, 'Log work'),
+      can('contacts.upsert', { kind: 'VENDOR' }) ? h('button', { type: 'button', onclick: () => newVendorSheet('', () => render(), 'KARIGAR') }, 'New karigar') : null));
+    const list = await api('vendors.list', { vendorType: 'KARIGAR' });
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'name', label: 'Karigar' }, { key: 'phone', label: 'Mobile', opt: true, render: (c) => (c.phone ? '0' + String(c.phone).slice(2) : '') },
+      { key: 'weOwePaisa', label: 'We owe', money: true }, { key: 'advancePaisa', label: 'Advance paid', money: true, opt: true },
+    ], list, { onRow: can('payments.pay') ? (v) => go('#/purchases/pay?vendor=' + v.id) : null, empty: 'No karigars yet.', csv: 'karigars' })));
+  });
+
+  async function logWorkSheet() {
+    const jobs = (await api('jobs.list', {})).filter((j) => !['CANCELLED', 'COMPLETED'].includes(j.status));
+    const box = h('div');
+    const karigar = contactPicker({ kind: 'VENDOR', vendorType: 'KARIGAR', allowNew: false, placeholder: 'Search karigar' });
+    const job = h('select', {}, h('option', { value: '' }, 'Choose order or batch'), jobs.map((j) => h('option', { value: j.id }, j.id + ' · ' + j.title + (j.contactName ? ' · ' + j.contactName : ''))));
+    const comp = h('select', {}, ['EMBROIDERY', 'STITCHING', 'OUTSOURCED', 'OTHER'].map((c) => h('option', { value: c }, COMPONENT_LABEL[c])));
+    const pieces = h('input', { type: 'number', min: '1', step: '1', value: 1 });
+    const rate = moneyInput({ label: 'Rate per piece' });
+    const date = h('input', { type: 'date', value: today() });
+    const desc = h('input', { placeholder: 'e.g. Dabka border' });
+    sheet('Log karigar work', h('div', {}, box, field('Karigar', karigar), field('Order or batch', job), field('Work', comp),
+      h('div', { class: 'row' }, field('Pieces', pieces), field('Rate per piece', rate)), h('div', { class: 'row' }, field('Date', date), field('Description', desc))), (close) => [
+      h('button', { type: 'button', onclick: close }, 'Cancel'),
+      h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+        try {
+          const k = karigar.value();
+          const r = await submitting(e.currentTarget, box, () => save('karigar.logWork', { contactId: k ? k.id : '', jobId: job.value, date: date.value, costComponent: comp.value, pieces: Number(pieces.value), ratePaisa: rate.value(), description: desc.value }, 'Karigar work'));
+          close();
+          if (r) { toast('Logged ' + rs(r.amountPaisa)); render(); }
+        } catch (err) { /* shown */ }
+      } }, 'Log work'),
+    ]);
+  }
+
   // ---------- modules not built yet ----------
-  const SOON = { store: ['Store', 'M6'], sale: ['New sale', 'M6'], returns: ['Returns', 'M6'], today: ['Today', 'M6'], cashup: ['Cash-up', 'M6'], purchases: ['Purchases', 'M4'],
-    karigars: ['Karigars', 'M4'], inventory: ['Inventory', 'M5'], banking: ['Banking', 'M8'], reports: ['Reports', 'M7'] };
+  const SOON = { store: ['Store', 'M6'], sale: ['New sale', 'M6'], returns: ['Returns', 'M6'], today: ['Today', 'M6'], cashup: ['Cash-up', 'M6'], inventory: ['Inventory', 'M5'], banking: ['Banking', 'M8'], reports: ['Reports', 'M7'] };
   route('/soon/:what', async (view, [what]) => {
     const s = SOON[what] || [what, 'a later milestone'];
     view.appendChild(h('h1', {}, s[0]));

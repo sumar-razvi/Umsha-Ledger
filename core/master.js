@@ -230,6 +230,34 @@ function prepareJobUpdate(job, existingLines, input, ctx) {
   return { fields: fields, newLines: added.lines, lineUpdates: lineUpdates };
 }
 
+// A TaxCodes row (one effective-dated version). Rates come from the tax
+// advisor; nothing in code assumes a rate.
+function prepareTaxCode(input, all) {
+  const id = text(input.id).toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9.\-]{1,30}$/.test(id)) fail('E_VALIDATION', 'Tax code ID: letters, numbers, dots and dashes', 'id');
+  const name = text(input.name);
+  if (!name) fail('E_VALIDATION', 'Enter a name', 'name');
+  const kind = oneOf(input.kind, ['SALES_OUTPUT', 'PURCHASE_INPUT', 'WHT', 'EXEMPT', 'ZERO'], 'kind', 'Kind');
+  const other = (all || []).filter(function (t) { return t.id === id; })[0];
+  if (other && other.kind !== kind) fail('E_VALIDATION', id + ' is a ' + other.kind + ' code; its kind cannot change', 'kind');
+  const rate = Number(input.rateBps);
+  if (!Number.isInteger(rate) || rate < 0 || rate > 10000) fail('E_VALIDATION', 'Rate must be 0 to 10000 basis points (18% = 1800)', 'rateBps');
+  if ((kind === 'EXEMPT' || kind === 'ZERO') && rate !== 0) fail('E_VALIDATION', 'Exempt and zero-rated codes have a rate of 0', 'rateBps');
+  const from = Validate.checkDate(input.effectiveFrom, 'effectiveFrom');
+  const to = isBlank(input.effectiveTo) ? '' : Validate.checkDate(input.effectiveTo, 'effectiveTo');
+  if (to && to < from) fail('E_VALIDATION', 'Effective to is before effective from', 'effectiveTo');
+  return {
+    row: {
+      id: id, name: name, kind: kind, rateBps: rate,
+      claimable: kind === 'PURCHASE_INPUT' ? Validate.isTrue(input.claimable) : false,
+      whtBase: kind === 'WHT' ? oneOf(input.whtBase || 'EXCL_SALES_TAX', ['GROSS', 'EXCL_SALES_TAX'], 'whtBase', 'WHT base') : '',
+      appliesTo: oneOf(input.appliesTo || 'ANY', ['GOODS', 'SERVICES', 'ANY'], 'appliesTo', 'Applies to'),
+      vendorFilerStatus: oneOf(input.vendorFilerStatus || 'ANY', ['FILER', 'NON_FILER', 'ANY'], 'vendorFilerStatus', 'Filer status'),
+      effectiveFrom: from, effectiveTo: to, isActive: isBlank(input.isActive) ? true : Validate.isTrue(input.isActive), notes: text(input.notes),
+    },
+  };
+}
+
 // User create/update (Owner only).
 function prepareUser(input, existing, all) {
   const merged = Object.assign({}, existing || {}, input);
@@ -252,5 +280,6 @@ if (typeof module !== 'undefined') module.exports = {
   prepareJob,
   prepareJobLines,
   prepareJobUpdate,
+  prepareTaxCode,
   prepareUser,
 };

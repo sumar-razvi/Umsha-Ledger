@@ -170,6 +170,9 @@ function createGas(opts) {
       getId() { return this.id; }, getName() { return this.name; }, isTrashed() { return this.trashed; },
       setTrashed(t) { this.trashed = t; return this; }, getDateCreated() { return this.created; },
       makeCopy(n, folder2) { return makeFile(n, folder2 || folder); },
+      bytes: [], mime: 'application/octet-stream',
+      getBlob() { const self = this; return { getBytes: () => self.bytes.slice(), getContentType: () => self.mime, getName: () => self.name }; },
+      getMimeType() { return this.mime; },
     };
     drive.files.push(f);
     return f;
@@ -180,6 +183,7 @@ function createGas(opts) {
   sheetFile.id = SHEET_ID;
   const folderApi = (folder) => ({
     getId: () => folder.id,
+    createFile(blob) { const f = makeFile(blob.name, folder); f.bytes = blob.bytes; f.mime = blob.mime; return f; },
     getFiles() {
       const list = drive.files.filter((f) => f.folder === folder || (f.folder && f.folder.id === folder.id));
       let i = 0;
@@ -216,6 +220,9 @@ function createGas(opts) {
       Charset: { UTF_8: 'utf8' },
       computeDigest: (alg, s) => Array.from(crypto.createHash(alg).update(String(s), 'utf8').digest()).map((b) => (b > 127 ? b - 256 : b)),
       getUuid: () => crypto.randomUUID(),
+      base64Decode: (s) => Array.from(Buffer.from(String(s), 'base64')).map((b) => (b > 127 ? b - 256 : b)),
+      base64Encode: (bytes) => Buffer.from(bytes.map((b) => (b + 256) % 256)).toString('base64'),
+      newBlob: (bytes, mime, name) => ({ bytes, mime, name }),
     },
     Session: { getEffectiveUser: () => ({ getEmail: () => COMPANY_EMAIL }), getActiveUser: () => ({ getEmail: () => COMPANY_EMAIL }) },
     ContentService: {
