@@ -20,6 +20,8 @@ In-house double-entry accounting and operations system for UMSHA (made-to-order 
 | `docs/10-dashboard-kpis.md` | Dashboard tabs and 60+ KPI definitions with formulas |
 | `seed/` | Chart of accounts (with QuickBooks mapping), tax codes, settings |
 
+Deployment: see [`README-deploy.md`](README-deploy.md).
+
 ## Development
 
 Needs Node 20+. No dependencies.

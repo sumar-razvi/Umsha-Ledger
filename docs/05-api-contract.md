@@ -19,8 +19,9 @@ Request:
 Response:
 ```json
 { "ok": true,  "data": { }, "meta": { "ms": 412 } }
-{ "ok": false, "code": "E_UNBALANCED", "message": "Debits 10,000 ≠ credits 9,500" }
+{ "ok": false, "code": "E_UNBALANCED", "message": "Debits 10,000 ≠ credits 9,500", "field": "lines[2]" }
 ```
+`field` is present when the error is about one input. A replayed write (same `requestId`) returns the stored response with `meta.replayed: true`. `requestId` must be 8–100 characters of `A-Z a-z 0-9 _ -` (a UUID works).
 
 ## Auth flow
 
@@ -146,6 +147,14 @@ All O F V (S sees job reports only; T sees own store's daily sales only).
 | `export.table` | O F | `{tab}` → CSV |
 
 QuickBooks export: one row per journal line. Columns follow the QuickBooks Online "Journal entries" import template (Journal No., Journal Date, Account, Debits, Credits, Description, Name, Class, Currency). **Claude Code: before finalising, download the current template from QuickBooks Online and match its headers and date format exactly.** Brand → QBO Class (`UMSHA`, `Mirae`, `Shared`). Amounts exported in rupees with 2 decimals. Fail with a list if any account has no `qbAccountName`.
+
+## Implementation notes (M2)
+
+- The permission matrix lives in `core/permissions.js` (`Permissions.MATRIX`) and is checked server-side before any handler runs. Payload rules: Store may upsert customers only and pay expenses only from a `PETTY` account (never drawings); Studio bills may contain `JOB` lines only; Store sees its own store's daily sales only.
+- Extra read actions beyond the tables above: `contacts.get`, `sales.list`, `sales.get`, `bills.list`, `bills.get`, `journal.list`; extra write: `backup.now` (Owner).
+- Writes are buffered and committed in one batch per tab in this order: Sequences, StockMoves, ItemBalances, Journal, JournalLines, document tabs, AuditLog, Requests. Sequences go first so a failure can leave a gap in numbering but never reuse a number.
+- `Db.gs` refuses any change to posted Journal, JournalLines, StockMoves or AuditLog rows except `Journal.reversedByJeId` and `JournalLines.reconciled`/`reconciledDate`, and only from empty.
+- Editor-only functions: `setupRun` (first setup), `installTriggers`, `nightly`. See `README-deploy.md`.
 
 ## Error codes
 `E_AUTH, E_ROLE, E_BUSY, E_VALIDATION (with field), E_NOT_FOUND, E_UNBALANCED, E_EMPTY_BRAND, E_NEG_AMOUNT, E_PERIOD_LOCKED, E_INACTIVE_ACCOUNT, E_NEG_STOCK, E_JOB_CLOSED, E_OVERPAY, E_TAX_OVERRIDE_NO_REASON, E_INTERNAL`

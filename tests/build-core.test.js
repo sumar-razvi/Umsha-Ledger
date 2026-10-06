@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
-const { buildCore, OUT_FILE } = require('../scripts/build-core.js');
+const { buildCore, buildSeed, OUT_FILE, SEED_FILE } = require('../scripts/build-core.js');
 
 function runInAppsScriptLikeContext(source) {
   const context = vm.createContext({});
@@ -57,6 +57,15 @@ describe('scripts/build-core.js', () => {
 
   test('committed apps-script/Core.gs is up to date (run `npm run build` if this fails)', () => {
     assert.equal(fs.readFileSync(OUT_FILE, 'utf8'), out);
+  });
+
+  test('committed apps-script/Seed.gs is up to date and holds every seed row', () => {
+    const seed = buildSeed();
+    assert.equal(fs.readFileSync(SEED_FILE, 'utf8'), seed);
+    const ctx = runInAppsScriptLikeContext(seed);
+    assert.equal(ctx.SEED.chart_of_accounts.length, 72);
+    assert.equal(ctx.SEED.chart_of_accounts.find((a) => a.code === '1710').name, 'Furniture, fixtures & store fit-out');
+    assert.ok(ctx.SEED.tax_codes.length > 0 && ctx.SEED.settings.length > 0);
   });
 
   describe('rejects core files that break the conventions', () => {

@@ -51,6 +51,7 @@ Numbers widen past the pad width rather than wrap (`INV-2026-100000`).
 
 ### `Users`
 `id, email, name, role, store, isActive, createdAt`
+IDs `USR-001`. Emails are stored lower case. There is always at least one active Owner.
 role ∈ `OWNER, FINANCE, STUDIO, STORE, VIEWER`. `store` used for STORE role (e.g. `MIRAE-KHI-01`).
 
 ### `Accounts`
@@ -84,7 +85,7 @@ Incremented only under script lock.
 - vendorType ∈ `SUPPLIER, KARIGAR, SERVICE, OTHER`
 - phone normalised to `92XXXXXXXXXX` (no plus, no leading zero).
 - FAMILY = owner/family members for drawings (R18).
-- IDs: `CUS-00001`, `VEN-00001`, `FAM-001`.
+- IDs: `CUS-00001`, `VEN-00001`, `FAM-001`. A contact of kind `BOTH` gets a `CUS-` ID. Kind can change only between CUSTOMER/VENDOR and BOTH.
 
 ### `Items`
 `id, category, name, unit, style, size, colour, collection, barcode, salePricePaisa, taxCodeId, reorderLevel, isActive, createdAt`
@@ -199,7 +200,7 @@ before/after are compact JSON (for settings/master data edits).
 
 ### `Requests` (idempotency)
 `requestId, action, userEmail, ts, responseJson`
-Pruned of rows older than 30 days by the nightly trigger.
+Pruned of rows older than 30 days by the nightly trigger (the one tab whose rows are ever removed; it is a retry log, not a record). A requestId replays only for the same user and action. Failed requests are not stored, so they can be retried with the same requestId.
 
 ### `Attachments`
 `id, docType, docId, driveFileId, fileName, mimeType, uploadedBy, uploadedAt`

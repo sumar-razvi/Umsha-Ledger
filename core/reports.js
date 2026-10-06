@@ -173,6 +173,36 @@ function balanceSheet(lines, acc, opts) {
   return out;
 }
 
+// ---------- Account ledger ----------
+
+// Every line on one account in [from, to] with a running balance, in the
+// account's natural sign (debit-normal accounts count debits up).
+// opts: {accountCode, from, to, brand}
+function accountLedger(lines, acc, opts) {
+  const o = opts || {};
+  const a = acc.accountsByCode[String(o.accountCode)];
+  if (!a) Validate.fail('E_NOT_FOUND', 'Account ' + o.accountCode + ' not found', 'accountCode');
+  const sign = a.normalBalance === 'CREDIT' ? -1 : 1;
+  let opening = 0;
+  const rows = [];
+  lines.forEach(function (l) {
+    if (l.accountCode !== a.code || (o.brand && l.brand !== o.brand)) return;
+    if (o.from && l.date < o.from) { opening += sign * net(l); return; }
+    if (o.to && l.date > o.to) return;
+    rows.push(l);
+  });
+  rows.sort(function (x, y) {
+    if (x.date !== y.date) return x.date < y.date ? -1 : 1;
+    return String(x.id || '') < String(y.id || '') ? -1 : String(x.id || '') > String(y.id || '') ? 1 : 0;
+  });
+  let balance = opening;
+  const out = rows.map(function (l) {
+    balance += sign * net(l);
+    return Object.assign({}, l, { balancePaisa: balance });
+  });
+  return { account: { code: a.code, name: a.name, type: a.type, normalBalance: a.normalBalance }, from: o.from || '', to: o.to || '', openingPaisa: opening, rows: out, closingPaisa: balance };
+}
+
 // ---------- Sub-ledgers ----------
 
 function sumBy(lines, accountCode, keyField, sign, opts) {
@@ -354,6 +384,7 @@ if (typeof module !== 'undefined') module.exports = {
   COLUMNS,
   AGE_BUCKETS,
   accountBalances,
+  accountLedger,
   trialBalance,
   profitAndLoss,
   balanceSheet,
