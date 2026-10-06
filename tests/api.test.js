@@ -22,7 +22,8 @@ describe('setup', () => {
   test('creates every tab with headers, seeds data, makes the company account Owner', () => {
     const gas = createGas();
     const r = gas.run('setupRun');
-    assert.equal(r.created.length, 31);
+    assert.equal(r.created.length, 34);
+    assert.equal(gas.rows('KpiTargets').length, 12);
     assert.equal(r.owner, COMPANY_EMAIL);
     assert.equal(gas.rows('Accounts').length, 72);
     assert.equal(gas.rows('Users')[0].role, 'OWNER');

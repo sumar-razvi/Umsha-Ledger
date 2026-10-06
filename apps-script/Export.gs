@@ -41,6 +41,12 @@ function nightly() {
     drift.forEach(function (d) {
       audit.push({ action: 'nightly.drift', docType: 'ITEM', docId: d.itemId, summary: 'ItemBalances differs from StockMoves for ' + d.itemId, before: d.stored, after: d.rebuilt });
     });
+    // Dashboard caches: full rebuild; any difference from the incremental updates is logged.
+    var sums = Summaries.rebuild();
+    sums.monthlyDrift.concat(sums.dailyDrift).slice(0, 50).forEach(function (d) {
+      audit.push({ action: 'nightly.drift', docType: 'SUMMARY', docId: d.key, summary: 'Dashboard summary differed from the ledger for ' + d.key, before: d.stored, after: d.rebuilt });
+    });
+    results.summaryDrift = sums.monthlyDrift.length + sums.dailyDrift.length;
     tx.append('AuditLog', audit.map(function (a) {
       return Object.assign({ id: tx.nextDocId('AUD', Dates.karachiDate(now)), ts: Dates.karachiTimestamp(now), userEmail: 'system', requestId: '', before: '', after: '' }, a);
     }));

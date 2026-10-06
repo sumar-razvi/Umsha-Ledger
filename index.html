@@ -112,6 +112,31 @@ table.data tfoot td { font-weight: 600; border-bottom: none; }
   .lineedit .desc { grid-column: 1 / -1; } .lineedit.head { display: none; }
 }
 
+/* dashboard */
+.dashtabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+.dashtabs a { padding: 8px 12px; white-space: nowrap; text-decoration: none; color: var(--muted); border-bottom: 2px solid transparent; }
+.dashtabs a.on { color: var(--accent); border-bottom-color: var(--accent); }
+.dashbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.dashbar select { width: auto; min-width: 0; }
+.dashbar .stamp { margin-left: auto; font-size: 12px; color: var(--muted); }
+a.tile { display: block; color: inherit; text-decoration: none; }
+a.tile:hover { border-color: var(--faint); }
+.tile.kpi { border-left: 4px solid var(--line); }
+.tile.rag-green { border-left-color: var(--ok); } .tile.rag-amber { border-left-color: #d29a2a; } .tile.rag-red { border-left-color: var(--bad); }
+.tile.rag-red .value { color: var(--bad); }
+.tile .delta { font-size: 13px; color: var(--muted); } .tile .delta.up { color: var(--ok); } .tile .delta.down { color: var(--bad); }
+.tile .delta.inv.up { color: var(--bad); } .tile .delta.inv.down { color: var(--ok); }
+.tile svg.spark { display: block; width: 100%; height: 28px; margin-top: 6px; }
+.alerts { list-style: none; margin: 0 0 var(--gap); padding: 0; display: grid; gap: 6px; }
+.alerts a { display: block; padding: 10px 14px; border-radius: 8px; text-decoration: none; }
+.alerts .red a { background: var(--bad-soft); color: var(--bad); } .alerts .amber a { background: var(--warn-soft); color: var(--warn); }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: var(--gap); }
+.charts > * { min-width: 0; }
+.chartbox { overflow-x: auto; } .chartbox .inner { position: relative; height: 240px; } .chartbox .inner.round { max-width: 360px; margin: 0 auto; }
+@media (max-width: 768px) { .chartbox .inner { min-width: 480px; } .chartbox .inner.narrow, .chartbox .inner.round { min-width: 0; } }
+@media (max-width: 768px) { .charts { grid-template-columns: 1fr; } .tiles.kpis { grid-template-columns: 1fr 1fr; } .tile .value { font-size: 21px; } }
+@media (max-width: 420px) { .tiles.kpis { gap: 10px; } .tile.kpi { padding: 12px; } .tile.kpi .value { font-size: 18px; overflow-wrap: anywhere; } }
+
 /* store */
 .cartline { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .stepper { display: inline-flex; align-items: center; gap: 4px; }
@@ -168,6 +193,7 @@ const CONFIG = {
   API_URL: '',          // Apps Script web app URL ending in /exec
   OAUTH_CLIENT_ID: '',  // Google Identity Services client ID
   DEV_SIGNIN: false,    // true only on the local demo server (npm run serve)
+  CHART_JS_URL: 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js', // dashboard charts; tables are shown if it cannot load
 };
 </script>
 <script>
@@ -590,9 +616,10 @@ const CONFIG = {
   }
 
   // ---------- screens: home ----------
-  route('/', async (view) => {
+  route('/', async (view, args, params) => {
     const first = (NAV[state.me.role] || [])[0];
     if (first && first[1] !== '/') { go('#' + first[1]); return; }
+    if (can('dashboard.get', { tab: 'OVERVIEW' })) { await dashboardView(view, params, '/'); return; }
     view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Good day, ' + (state.me.name || 'Owner').split(' ')[0]),
       h('a', { class: 'btn primary', href: '#/orders/new' }, 'New order')));
     const jobs = await api('jobs.list', { type: 'MTO_ORDER' });
@@ -606,7 +633,6 @@ const CONFIG = {
       tile('Overdue', open.filter((j) => j.promisedDate && j.promisedDate < today()).length)));
     view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Due in the next 14 days'),
       ordersTable(due, 'No orders due in the next two weeks.')));
-    view.appendChild(h('p', { class: 'muted small' }, 'Cash position, P&L by brand and alerts arrive with Reports (milestone M7) and the Dashboard (M10).'));
   });
   function tile(label, value) { return h('div', { class: 'tile' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value)); }
 
@@ -628,7 +654,7 @@ const CONFIG = {
 
   route('/orders', async (view, args, params) => {
     const filter = params.get('status') || 'open';
-    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Orders'), can('reports.jobProfitability') ? h('a', { class: 'btn ghost', href: '#/reports/jobs' }, 'Profit by order') : null, can('jobs.create') ? h('a', { class: 'btn primary', href: '#/orders/new' }, 'New order') : null));
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Orders'), state.me.role === 'STUDIO' ? h('a', { class: 'btn ghost', href: '#/dashboard' }, 'Dashboard') : null, can('reports.jobProfitability') ? h('a', { class: 'btn ghost', href: '#/reports/jobs' }, 'Profit by order') : null, can('jobs.create') ? h('a', { class: 'btn primary', href: '#/orders/new' }, 'New order') : null));
     const chips = [['open', 'Open'], ['READY', 'Ready'], ['DELIVERED', 'Delivered'], ['CANCELLED', 'Cancelled'], ['all', 'All']];
     view.appendChild(h('div', { class: 'chips' }, chips.map(([k, l]) => h('button', { type: 'button', class: 'chip' + (k === filter ? ' on' : ''), onclick: () => go('#/orders?status=' + k) }, l))));
     const q = h('input', { type: 'search', placeholder: 'Search order, customer or title', 'aria-label': 'Search orders' });
@@ -1193,10 +1219,18 @@ const CONFIG = {
         if (!confirm('Close the fiscal year ending ' + fyEnd.value + '?')) return;
         try { const r = await save('year.close', { fiscalYearEnd: fyEnd.value }, 'Year-end close'); toast('Year closed: net profit ' + rs(r.netProfitPaisa) + ' to retained earnings'); } catch (e) { toast(e.message, 'bad'); }
       } }, 'Close the year')))));
+    if (can('kpiTargets.list')) {
+      const targets = await api('kpiTargets.list', {});
+      view.appendChild(h('div', { class: 'card' }, h('div', { class: 'pagehead' }, h('h2', { style: 'flex:1;margin:0' }, 'Dashboard targets'), h('button', { type: 'button', onclick: () => kpiTargetSheet() }, 'Add target')),
+        h('p', { class: 'muted small' }, 'These colour the dashboard tiles (green, amber, red) and are what "vs target" compares with.'),
+        dataTable([{ key: 'kpi', label: 'KPI' }, { key: 'brand', label: 'Brand' }, { key: 'period', label: 'Month', opt: true }, { key: 'target', label: 'Target', num: true },
+          { key: 'amberAt', label: 'Amber at', num: true, opt: true }, { key: 'redAt', label: 'Red at', num: true, opt: true }, { key: 'notes', label: 'Notes', opt: true }], targets, { onRow: (t) => kpiTargetSheet(t) })));
+    }
     const tabSel = h('select', {}, Object.keys(Schema.TABS).filter((t) => t !== 'Requests').map((t) => h('option', { value: t }, t)));
     view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'System'), h('div', { class: 'actions' },
       h('button', { type: 'button', onclick: async () => { try { const r = await save('setup.run', {}, 'Run setup'); toast(Setup_summary(r)); } catch (e) { toast(e.message, 'bad'); } } }, 'Run setup (adds anything missing)'),
       h('button', { type: 'button', onclick: async () => { try { const r = await save('backup.now', {}, 'Backup'); toast('Backup saved: ' + r.name); } catch (e) { toast(e.message, 'bad'); } } }, 'Back up now'),
+      h('button', { type: 'button', onclick: async () => { try { const r = await save('summaries.rebuild', {}, 'Rebuild summaries'); toast('Dashboard summaries rebuilt' + (r.monthlyDrift.length + r.dailyDrift.length ? ': ' + (r.monthlyDrift.length + r.dailyDrift.length) + ' rows corrected' : ', no differences')); } catch (e) { toast(e.message, 'bad'); } } }, 'Rebuild dashboard summaries'),
       h('a', { class: 'btn', href: '#/accounts' }, 'Chart of accounts')),
       h('div', { class: 'row', style: 'margin-top:12px' }, field('Download a whole tab as CSV', tabSel), h('div', { style: 'flex:0 0 auto;margin-bottom:12px' }, h('button', { type: 'button', onclick: async () => {
         try { const t = await api('export.table', { tab: tabSel.value }); downloadText(t.filename, t.csv); } catch (e) { toast(e.message, 'bad'); }
@@ -2172,7 +2206,7 @@ const CONFIG = {
     const d = await api('reports.dailySales', { date, store: storeSel });
     const dateIn = h('input', { type: 'date', value: date });
     dateIn.addEventListener('change', () => go('#/today?date=' + dateIn.value + (storeSel && state.me.role !== 'STORE' ? '&store=' + storeSel : '')));
-    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, date === today() ? 'Today' : fmtDate(date)), h('span', { class: 'muted' }, d.store || 'All stores'), h('div', { style: 'flex:0 0 180px' }, dateIn)));
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, date === today() ? 'Today' : fmtDate(date)), h('span', { class: 'muted' }, d.store || 'All stores'), can('dashboard.get', { tab: 'MIRAE' }) ? h('a', { class: 'btn ghost', href: '#/dashboard?tab=MIRAE' }, 'Dashboard') : null, h('div', { style: 'flex:0 0 180px' }, dateIn)));
     view.appendChild(h('div', { class: 'tiles' }, tile('Sales', rs(d.totals.salesGrossPaisa)), tile('Returns', rs(d.totals.returnsGrossPaisa)),
       tile('Transactions', d.totals.transactions), tile('Net (excl. tax)', rs(d.totals.netPaisa)), d.totals.costPaisa !== undefined ? tile('Gross margin', rs(d.totals.netPaisa - d.totals.costPaisa)) : null));
     view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'By payment method'), dataTable([{ key: 'm', label: 'Method' }, { key: 'v', label: 'Amount', money: true }],
@@ -2797,6 +2831,186 @@ const CONFIG = {
           if (a) Object.assign(payload, { id: a.id, isMoney: a.isMoney, moneyKind: a.moneyKind, isContra: a.isContra, subType: a.subType });
           const r = await submitting(e.currentTarget, box, () => save('accounts.upsert', payload, 'Account ' + code.value));
           close(); if (r) { const me = await api('session.me', {}); state.accounts = me.accounts; state.accountsByCode = {}; me.accounts.forEach((x) => { state.accountsByCode[x.code] = x; }); render(); }
+        } catch (err) { /* shown */ }
+      } }, 'Save'),
+    ]);
+  }
+
+  // ---------- dashboard (M10) ----------
+  const DASH_PERIODS = [['TODAY', 'Today'], ['WTD', 'Week'], ['MTD', 'Month'], ['QTD', 'Quarter'], ['YTD', 'Year'], ['L12M', '12 months'], ['CUSTOM', 'Custom']];
+  const DASH_COMPARE = [['PREVIOUS', 'vs previous period'], ['LAST_YEAR', 'vs last year'], ['TARGET', 'vs target'], ['NONE', 'no comparison']];
+  const LOWER_BETTER = ['A7', 'A7b', 'A8b', 'C5', 'C8', 'C12', 'D9', 'D10', 'D13', 'D8', 'E4', 'E6', 'G2', 'G7', 'G6'];
+  const PALETTE = ['#6d2b3d', '#2f5d62', '#b08d57', '#3c4a74', '#5d5a55', '#8f6f9f'];
+  route('/dashboard', async (view, args, params) => dashboardView(view, params, '/dashboard'));
+
+  let chartLib = null;
+  function loadChartJs() {
+    if (window.Chart) return Promise.resolve(window.Chart);
+    if (!chartLib) {
+      chartLib = new Promise((resolve) => {
+        const s = document.createElement('script');
+        const t = setTimeout(() => resolve(null), 6000);
+        s.src = CONFIG.CHART_JS_URL;
+        s.onload = () => { clearTimeout(t); resolve(window.Chart || null); };
+        s.onerror = () => { clearTimeout(t); chartLib = null; resolve(null); };
+        document.head.appendChild(s);
+      });
+    }
+    return chartLib;
+  }
+
+  function kpiFmt(v, unit) {
+    if (v === null || v === undefined || v === '') return 'n/a';
+    if (unit === 'paisa') return rs(v);
+    if (unit === 'bps') return (v / 100).toFixed(1) + '%';
+    if (unit === 'ratio') return (v / 10000).toFixed(2) + '×';
+    if (unit === 'days') return v + (v === 1 ? ' day' : ' days');
+    if (unit === 'hundredths') return (v / 100).toFixed(2);
+    if (unit === 'date') return fmtDate(v);
+    return String(v);
+  }
+
+  function sparkline(points) {
+    const vals = points.map((p) => (p === null ? null : Number(p)));
+    const real = vals.filter((v) => v !== null);
+    if (real.length < 2) return null;
+    const min = Math.min(...real); const max = Math.max(...real); const span = max - min || 1;
+    const step = 100 / (vals.length - 1);
+    const pts = vals.map((v, i) => (v === null ? null : (i * step).toFixed(1) + ',' + (26 - ((v - min) / span) * 24).toFixed(1))).filter(Boolean).join(' ');
+    const holder = h('span');
+    holder.innerHTML = '<svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" points="' + pts + '"/></svg>';
+    holder.firstChild.style.color = 'var(--faint)';
+    return holder.firstChild;
+  }
+
+  function kpiTile(t, cmpLabel) {
+    let delta = null;
+    if (t.delta !== null && t.delta !== undefined) {
+      const dir = t.delta > 0 ? 'up' : t.delta < 0 ? 'down' : '';
+      const size = t.deltaPct !== null && t.deltaPct !== undefined ? (Math.abs(t.deltaPct) / 100).toFixed(1) + '%' : kpiFmt(Math.abs(t.delta), t.unit);
+      delta = h('div', { class: 'delta ' + dir + (LOWER_BETTER.includes(t.id) ? ' inv' : '') }, (dir === 'up' ? '▲ ' : dir === 'down' ? '▼ ' : '') + size + ' ' + cmpLabel);
+    } else if (t.compare !== null && t.compare !== undefined) {
+      delta = h('div', { class: 'delta' }, cmpLabel + ': ' + kpiFmt(t.compare, t.unit));
+    }
+    const props = { class: 'tile kpi' + (t.rag ? ' rag-' + t.rag : ''), 'data-kpi': t.id, title: t.rag ? 'Status: ' + t.rag : '' };
+    if (t.link) props.href = t.link;
+    return h(t.link ? 'a' : 'div', props, h('div', { class: 'label' }, t.label), h('div', { class: 'value' }, kpiFmt(t.value, t.unit)), delta,
+      t.spark && t.spark.length ? sparkline(t.spark) : null, t.note ? h('div', { class: 'muted small' }, t.note) : null);
+  }
+
+  function chartTable(c) {
+    const cols = [{ key: 'label', label: '' }].concat(c.series.map((s, i) => ({ key: 's' + i, label: s.label, num: true })));
+    const rows = c.labels.map((l, j) => { const r = { label: /^\d{4}-\d{2}(-\d{2})?$/.test(l) ? (l.length === 7 ? monthLabel(l) : fmtDate(l)) : l }; c.series.forEach((s, i) => { r['s' + i] = kpiFmt(s.data[j], c.unit); }); return r; });
+    return dataTable(cols, rows, { empty: 'No data for this period.' });
+  }
+  function monthLabel(m) { return new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7) - 1, 1)).toLocaleString('en-GB', { month: 'short', year: '2-digit', timeZone: 'UTC' }); }
+
+  function drawChart(C, box, c) {
+    const canvas = h('canvas', { 'aria-label': c.title, role: 'img' });
+    box.appendChild(h('div', { class: 'inner' + (c.type === 'doughnut' ? ' round' : c.labels.length <= 6 ? ' narrow' : '') }, canvas));
+    const scale = c.unit === 'paisa' ? 100 : c.unit === 'bps' ? 100 : 1;
+    const labels = c.labels.map((l) => (/^\d{4}-\d{2}$/.test(l) ? monthLabel(l) : /^\d{4}-\d{2}-\d{2}$/.test(l) ? fmtDate(l) : l));
+    const type = c.type === 'stacked' ? 'bar' : c.type;
+    const fmt = (v) => (c.unit === 'paisa' ? 'Rs ' + Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 }) : c.unit === 'bps' ? Number(v).toFixed(1) + '%' : v);
+    const cfg = {
+      type, data: { labels, datasets: c.series.map((s, i) => ({ label: s.label, data: s.data.map((v) => (v === null ? null : v / scale)), backgroundColor: type === 'doughnut' ? PALETTE : PALETTE[i % PALETTE.length], borderColor: type === 'line' ? PALETTE[i % PALETTE.length] : undefined, pointRadius: type === 'line' && s.data.length > 31 ? 0 : 2, tension: 0.2 })) },
+      options: { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: c.series.length > 1 || type === 'doughnut', position: 'bottom' }, tooltip: { callbacks: { label: (ctx) => ctx.dataset.label + ': ' + fmt(ctx.parsed.y !== undefined ? ctx.parsed.y : ctx.parsed) } } } },
+    };
+    if (type !== 'doughnut') cfg.options.scales = { x: { stacked: c.type === 'stacked', ticks: { autoSkip: true, maxRotation: 0 } }, y: { stacked: c.type === 'stacked', ticks: { callback: (v) => (c.unit === 'paisa' ? (Math.abs(v) >= 100000 ? (v / 100000).toFixed(1) + 'L' : Number(v).toLocaleString('en-US')) : fmt(v)) } } };
+    if (c.unit === 'count' && cfg.options.scales) cfg.options.scales.y.ticks.precision = 0;
+    new C(canvas, cfg);
+  }
+
+  async function dashboardView(view, params, path) {
+    const tabs = Kpis.TABS.filter((t) => can('dashboard.get', { tab: t }));
+    if (!tabs.length) { view.appendChild(h('div', { class: 'empty' }, 'No dashboard for your role.')); return; }
+    const tab = tabs.includes(params.get('tab')) ? params.get('tab') : tabs[0];
+    const q = { tab, period: params.get('period') || 'MTD', brand: params.get('brand') || 'ALL', compareTo: params.get('cmp') || 'PREVIOUS', from: params.get('from') || '', to: params.get('to') || '' };
+    const link = (over) => { const x = new URLSearchParams(); const m = Object.assign({}, q, over); x.set('tab', m.tab); x.set('period', m.period); x.set('brand', m.brand); x.set('cmp', m.compareTo); if (m.period === 'CUSTOM') { x.set('from', m.from); x.set('to', m.to); } return '#' + path + '?' + x.toString(); };
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Dashboard')));
+    if (tabs.length > 1) view.appendChild(h('nav', { class: 'dashtabs', 'aria-label': 'Dashboard tabs' }, tabs.map((t) => h('a', { href: link({ tab: t }), class: t === tab ? 'on' : '' }, Kpis.TAB_LABEL[t]))));
+    const period = h('select', { 'aria-label': 'Period' }, DASH_PERIODS.map(([v, l]) => h('option', { value: v, selected: v === q.period }, l)));
+    const brand = h('select', { 'aria-label': 'Brand' }, [['ALL', 'All brands'], ['UMSHA', 'UMSHA'], ['MIRAE', 'Mirae']].map(([v, l]) => h('option', { value: v, selected: v === q.brand }, l)));
+    const cmp = h('select', { 'aria-label': 'Compare' }, DASH_COMPARE.map(([v, l]) => h('option', { value: v, selected: v === q.compareTo }, l)));
+    const from = h('input', { type: 'date', value: q.from || monthBounds(0).from, 'aria-label': 'From', style: 'width:auto' });
+    const to = h('input', { type: 'date', value: q.to || today(), 'aria-label': 'To', style: 'width:auto' });
+    const custom = h('span', { class: q.period === 'CUSTOM' ? '' : 'hidden', style: 'display:inline-flex;gap:6px' }, from, to);
+    const stamp = h('span', { class: 'stamp' });
+    const refresh = h('button', { type: 'button', 'aria-label': 'Refresh' }, '↻ Refresh');
+    const apply = () => go(link({ period: period.value, brand: brand.value, compareTo: cmp.value, from: from.value, to: to.value }));
+    period.addEventListener('change', () => { if (period.value === 'CUSTOM') custom.classList.remove('hidden'); else apply(); });
+    [brand, cmp, from, to].forEach((x) => x.addEventListener('change', apply));
+    const showBrand = tab === 'OVERVIEW';
+    view.appendChild(h('div', { class: 'dashbar noprint' }, period, custom, showBrand ? brand : null, state.me.role === 'STORE' ? null : cmp, refresh, stamp));
+    const body = h('div');
+    view.appendChild(body);
+    const cmpLabel = (DASH_COMPARE.find(([v]) => v === q.compareTo) || ['', ''])[1];
+
+    async function load(silent) {
+      let d;
+      try {
+        d = await api('dashboard.get', { tab, period: q.period, brand: q.brand, compareTo: q.compareTo, from: q.period === 'CUSTOM' ? q.from : undefined, to: q.period === 'CUSTOM' ? q.to : undefined });
+      } catch (e) {
+        if (!silent) { clear(body).appendChild(h('div', { class: 'notice bad' }, e.message)); }
+        return;
+      }
+      const ts = String(d.asOf || '').slice(11, 16);
+      stamp.textContent = fmtDate(d.from) + (d.to !== d.from ? ' – ' + fmtDate(d.to) : '') + (ts ? ' · updated ' + ts : '') + (d.cached ? ' (cached)' : '');
+      clear(body);
+      if (d.alerts && d.alerts.length) body.appendChild(h('ul', { class: 'alerts', 'aria-label': 'Alerts' }, d.alerts.map((a) => h('li', { class: a.level }, h('a', { href: a.link }, (a.level === 'red' ? '● ' : '▲ ') + a.text)))));
+      if (tab === 'OVERVIEW' && d.alerts && !d.alerts.length) body.appendChild(h('div', { class: 'notice ok' }, 'Nothing needs attention.'));
+      body.appendChild(h('div', { class: 'tiles kpis' }, d.tiles.map((t) => kpiTile(t, cmpLabel))));
+      (d.notes || []).forEach((n) => body.appendChild(h('p', { class: 'muted small' }, n)));
+      const charts = h('div', { class: 'charts' });
+      body.appendChild(charts);
+      d.tables.forEach((t) => {
+        const cols = t.columns.map((c) => ({ key: c.key, label: c.label, num: ['paisa', 'bps', 'count', 'qty', 'days'].includes(c.unit), render: c.unit && c.unit !== 'count' ? (r) => kpiFmt(r[c.key], c.unit) : undefined }));
+        body.appendChild(h('div', { class: 'card' }, h('div', { class: 'pagehead' }, h('h2', { style: 'flex:1;margin:0' }, t.title), t.link ? h('a', { href: t.link }, 'Open report') : null),
+          dataTable(cols, t.rows, { onRow: (r) => r.link && go(r.link), empty: 'None.' })));
+      });
+      if (!d.charts.length) return;
+      const boxes = d.charts.map((c) => {
+        const box = h('div', { class: 'chartbox' });
+        charts.appendChild(h('div', { class: 'card', 'data-chart': c.id }, h('h3', {}, c.title), box));
+        return box;
+      });
+      const C = await loadChartJs();
+      d.charts.forEach((c, i) => {
+        const empty = !c.labels.length || c.series.every((s) => s.data.every((v) => !v));
+        if (empty) boxes[i].appendChild(h('div', { class: 'empty' }, 'No data for this period.'));
+        else if (C) {
+          drawChart(C, boxes[i], c);
+          if (/^\d{4}-\d{2}/.test(c.labels[0] || '')) boxes[i].scrollLeft = boxes[i].scrollWidth; // latest dates in view on phones
+        }
+        else boxes[i].appendChild(chartTable(c));
+      });
+    }
+    refresh.addEventListener('click', () => load(false));
+    await load(false);
+    // Refresh every 5 minutes while this page is open and visible.
+    const timer = setInterval(() => {
+      if (!body.isConnected) { clearInterval(timer); return; }
+      if (document.visibilityState === 'visible') load(true);
+    }, 5 * 60 * 1000);
+  }
+
+  function kpiTargetSheet(t) {
+    const box = h('div');
+    const kpi = h('select', { disabled: !!t }, Kpis.TARGET_KEYS.map((k) => h('option', { value: k, selected: t && t.kpi === k }, k)));
+    const brand = h('select', { disabled: !!t }, ['ALL', 'UMSHA', 'MIRAE'].map((b) => h('option', { value: b, selected: t && t.brand === b }, b)));
+    const period = h('input', { value: t ? t.period : 'ANY', placeholder: 'ANY or 2026-10', disabled: !!t });
+    const num = (v) => h('input', { type: 'number', step: '1', value: v === undefined || v === null ? '' : v });
+    const target = num(t ? t.target : 0); const amber = num(t ? t.amberAt : ''); const red = num(t ? t.redAt : '');
+    const dir = h('select', {}, [['HIGHER_BETTER', 'Higher is better'], ['LOWER_BETTER', 'Lower is better']].map(([v, l]) => h('option', { value: v, selected: t && t.direction === v }, l)));
+    const notes = h('input', { value: t ? t.notes : '' });
+    sheet(t ? 'Target ' + t.kpi : 'New target', h('div', {}, box, h('div', { class: 'row' }, field('KPI', kpi), field('Brand', brand), field('Month', period)),
+      h('div', { class: 'row' }, field('Target', target), field('Amber at', amber), field('Red at', red)), field('Direction', dir), field('Notes', notes),
+      h('p', { class: 'muted small' }, 'Money in paisa (Rs 1 = 100), percentages in basis points (50% = 5000), ratios ×10,000 (1.00× = 10000), days as days.')), (close) => [
+      h('button', { type: 'button', onclick: close }, 'Cancel'),
+      h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+        try {
+          const r = await submitting(e.currentTarget, box, () => save('kpiTargets.upsert', { id: t ? t.id : '', kpi: kpi.value, brand: brand.value, period: period.value, target: target.value, amberAt: amber.value, redAt: red.value, direction: dir.value, notes: notes.value }, 'Target ' + kpi.value));
+          close(); if (r) { toast('Target saved'); render(); }
         } catch (err) { /* shown */ }
       } }, 'Save'),
     ]);

@@ -221,7 +221,22 @@ Pruned of rows older than 30 days by the nightly trigger (the one tab whose rows
 
 ## Dashboard tabs (module M10)
 
-`KpiTargets`, `MonthlySummary`, `DailySales`, and new column `Jobs.budgetCostPaisa`. Columns defined in `10-dashboard-kpis.md`.
+`KpiTargets`, `MonthlySummary`, `DailySales`, and new column `Jobs.budgetCostPaisa`. Defined in `10-dashboard-kpis.md`; as built:
+
+### `KpiTargets`
+`id, kpi, brand, period, target, amberAt, redAt, direction, notes`
+- Seeded from `seed/kpi_targets.csv` (`KT-001` …); new rows continue the numbering. `kpi` is one of `Kpis.TARGET_KEYS`. `target`, `amberAt`, `redAt` are whole numbers in the KPI's unit (paisa, bps, ratio × 10,000, days). Blank thresholds mean the tile is not coloured.
+- One row per `kpi` + `brand` + `period` (`ANY` or `YYYY-MM`; a month row wins over `ANY`).
+
+### `MonthlySummary` (cache, rebuildable, no key column)
+`month, accountCode, brand, isClosing, debitPaisa, creditPaisa, lineCount`
+- One row per month, account, brand and `isClosing` (year-end closing entries are kept apart so profit figures can leave them out, as the P&L does).
+- Every write adds its own journal lines inside the same lock (`Summaries.apply` before `Db.commit`); `nightly` rebuilds it from `JournalLines` and logs any drift (`nightly.drift`, docType `SUMMARY`).
+
+### `DailySales` (cache, rebuildable, no key column)
+`date, store, channel, netPaisa, taxPaisa, costPaisa, discountPaisa, transactions, units, returnsNetPaisa, cardPaisa`
+- From posted (not VOID) `Sales`/`SaleLines`, by the document's date. `netPaisa`, `taxPaisa`, `discountPaisa`, `units`: goods sold before returns; `returnsNetPaisa`: net value taken back on that date; `costPaisa`: cost of goods sold less cost of goods returned; `transactions`: `SALE` documents (returns and exchanges are not transactions); `cardPaisa`: money into card/wallet clearing accounts (refunds negative), used for the age of unsettled card takings.
+- A write that adds or voids a sale recomputes that date and store's rows.
 
 ---
 

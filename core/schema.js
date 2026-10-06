@@ -47,13 +47,18 @@ const TABS = {
   AuditLog: { appendOnly: true, columns: ['id', 'ts', 'userEmail', 'action', 'docType', 'docId', 'requestId', 'summary', 'before', 'after'] },
   Requests: { key: 'requestId', columns: ['requestId', 'action', 'userEmail', 'ts', 'responseJson'] },
   Attachments: { columns: ['id', 'docType', 'docId', 'driveFileId', 'fileName', 'mimeType', 'uploadedBy', 'uploadedAt'] },
+
+  // Dashboard (M10). The two summaries are caches rebuilt nightly from the ledger and Sales.
+  KpiTargets: { columns: ['id', 'kpi', 'brand', 'period', 'target', 'amberAt', 'redAt', 'direction', 'notes'] },
+  MonthlySummary: { key: null, columns: ['month', 'accountCode', 'brand', 'isClosing', 'debitPaisa', 'creditPaisa', 'lineCount'] },
+  DailySales: { key: null, columns: ['date', 'store', 'channel', 'netPaisa', 'taxPaisa', 'costPaisa', 'discountPaisa', 'transactions', 'units', 'returnsNetPaisa', 'cardPaisa'] },
 };
 
 // Tab order for Setup (and for people browsing the Sheet).
 const TAB_ORDER = Object.keys(TABS);
 
-const DECIMAL_COLUMNS = ['qty', 'systemQty', 'countedQty', 'diffQty', 'returnedQty', 'fxAmount', 'fxRate', 'weight', 'reorderLevel'];
-const INT_COLUMNS = ['next', 'sortOrder'];
+const DECIMAL_COLUMNS = ['qty', 'systemQty', 'countedQty', 'diffQty', 'returnedQty', 'fxAmount', 'fxRate', 'weight', 'reorderLevel', 'units'];
+const INT_COLUMNS = ['next', 'sortOrder', 'lineCount', 'transactions', 'target', 'amberAt', 'redAt'];
 const BOOL_COLUMNS = ['claimable', 'lateCost', 'reconciled', 'restock', 'pricesIncludeTax'];
 const JSON_COLUMNS = ['attachmentIds', 'before', 'after', 'responseJson'];
 

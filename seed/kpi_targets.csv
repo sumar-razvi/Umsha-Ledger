@@ -1,0 +1,13 @@
+id,kpi,brand,period,target,amberAt,redAt,direction,notes
+KT-001,minCash,ALL,ANY,0,,0,HIGHER_BETTER,Cash on hand (paisa): red below redAt. Set to the cash the business must always keep.
+KT-002,cashRunwayDays,ALL,ANY,90,60,30,HIGHER_BETTER,Days of cash at recent spend: red below 30, amber below 60
+KT-003,advanceCoverage,ALL,ANY,15000,12000,10000,HIGHER_BETTER,Cash divided by customer advances held (10000 = 1.00x): red below 1.00x
+KT-004,minAdvancePct,UMSHA,ANY,5000,5000,,HIGHER_BETTER,First advance as a share of order value (bps): amber below 50%
+KT-005,maxReturnPct,MIRAE,ANY,800,800,,LOWER_BETTER,Returns as a share of sales (bps): amber above 8%
+KT-006,maxConcentrationPct,ALL,ANY,4000,4000,,LOWER_BETTER,Top 10 customers' share of 12-month revenue (bps): amber above 40%
+KT-007,drawingsLimitMonthly,ALL,ANY,0,,,LOWER_BETTER,Owner drawings per month (paisa); 0 = no limit
+KT-008,revenueTarget,UMSHA,ANY,0,,,HIGHER_BETTER,Monthly net revenue target (paisa); add rows with period YYYY-MM for specific months
+KT-009,revenueTarget,MIRAE,ANY,0,,,HIGHER_BETTER,Monthly net revenue target (paisa); add rows with period YYYY-MM for specific months
+KT-010,bankRecMaxDays,ALL,ANY,30,,35,LOWER_BETTER,Days since the last bank reconciliation: red above 35
+KT-011,onTimePct,UMSHA,ANY,9000,8000,6000,HIGHER_BETTER,Orders delivered by the promised date (bps)
+KT-012,grossMarginPct,ALL,ANY,0,,,HIGHER_BETTER,Gross margin (bps); set amberAt/redAt to colour the tile

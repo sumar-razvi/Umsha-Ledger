@@ -47,7 +47,7 @@ In the Apps Script editor (`npx @google/clasp open`): **Project Settings → Scr
 In the editor, choose the function **`setupRun`** and press **Run**. Approve the permissions (Sheets, Drive for backups, external requests for sign-in checks, triggers). Setup:
 
 - creates every tab with its header row and plain-text formatting on text columns,
-- loads the chart of accounts, tax codes and settings from `/seed`,
+- loads the chart of accounts, tax codes, settings and default dashboard targets (`KpiTargets`) from `/seed`,
 - adds the company account as the first **Owner**.
 
 Running it again is safe: it only adds what is missing.
@@ -55,7 +55,8 @@ Running it again is safe: it only adds what is missing.
 Then run **`installTriggers`** once. It schedules `nightly` at 02:00 Karachi time. That job:
 - copies the Sheet to the backup folder and keeps 30 copies;
 - prunes the idempotency log;
-- checks the stock cache against the stock moves, recording any difference in AuditLog.
+- checks the stock cache against the stock moves, recording any difference in AuditLog;
+- rebuilds the dashboard summaries (`MonthlySummary`, `DailySales`) from the ledger and logs any drift from the live updates.
 
 ## 6. Deploy the web app
 
@@ -82,7 +83,7 @@ npx @google/clasp deployments                       # find the deployment ID
 npx @google/clasp deploy -i <deploymentId> --description "what changed"
 ```
 
-Re-deploying to the **same deployment ID** keeps the URL unchanged. If a release adds columns or tabs, run `setupRun` again (or Settings → Run setup in the app).
+Re-deploying to the **same deployment ID** keeps the URL unchanged. If a release adds columns or tabs, run `setupRun` again (or Settings → Run setup in the app). The first run after upgrading to the dashboard release also fills `MonthlySummary` and `DailySales` from the existing entries.
 
 ## 7. Users and settings
 
@@ -99,4 +100,5 @@ In **Settings**, fill in company name, NTN/STRN, `backupFolderId` and `attachmen
 | `Your sign-in could not be verified` | `OAUTH_CLIENT_ID` must equal the Client ID in `index.html`; the app's origin must be in the OAuth client's JavaScript origins |
 | `The account … does not have access` | Add the email to Users (lower case, `isActive` TRUE) |
 | `The system is busy …` | Another save held the lock for 20 s; the app retries automatically with the same request ID |
+| Dashboard numbers look stale or wrong | Settings → System → Rebuild dashboard summaries (Owner); the audit log shows any drift found |
 | Errors after editing code | `npm test`, `npm run build`, `clasp push`, then redeploy to the same deployment ID |

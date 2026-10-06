@@ -1327,6 +1327,30 @@ var Actions = {
     return Reports.accountLedger(Db.read('JournalLines'), acc, { accountCode: need_(p.accountCode, 'accountCode', 'Choose an account'), from: p.from, to: p.to, brand: p.brand });
   },
 
+  // ---------- dashboard (M10) ----------
+
+  'dashboard.get': function (p, env) {
+    return Dashboard.get(p, env);
+  },
+
+  'kpiTargets.list': function () {
+    return Db.read('KpiTargets').slice().sort(function (a, b) { return a.kpi < b.kpi ? -1 : a.kpi > b.kpi ? 1 : a.id < b.id ? -1 : 1; });
+  },
+
+  'kpiTargets.upsert': function (p, env) {
+    var rows = Db.read('KpiTargets');
+    var row = Kpis.prepareTarget(p, rows);
+    var before = rows.filter(function (r) { return r.id === row.id; })[0];
+    if (before) env.tx.update('KpiTargets', row.id, row);
+    else env.tx.append('KpiTargets', [row]);
+    return { data: row, audit: { docType: 'KPI_TARGET', docId: row.id, summary: (before ? 'Changed' : 'Added') + ' target ' + row.kpi + ' ' + row.brand + ' ' + row.period, before: before || '', after: row } };
+  },
+
+  'summaries.rebuild': function (p, env) {
+    var r = Summaries.rebuild();
+    return { data: r, audit: { docType: 'SUMMARY', docId: 'MonthlySummary', summary: 'Rebuilt dashboard summaries: ' + r.monthlyDrift.length + ' monthly and ' + r.dailyDrift.length + ' daily rows had drifted' } };
+  },
+
   'backup.now': function (p, env) {
     var r = Backup.now();
     return { data: r, audit: { docType: 'BACKUP', docId: r.fileId, summary: 'Backup ' + r.name } };

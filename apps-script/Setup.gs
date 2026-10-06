@@ -44,9 +44,16 @@ var Setup = {
     seeded += Setup.seedAccounts_(tx);
     seeded += Setup.seedMissing_(tx, 'TaxCodes', SEED.tax_codes, function (r) { return r.id + '|' + r.effectiveFrom; });
     seeded += Setup.seedMissing_(tx, 'Settings', SEED.settings, function (r) { return r.key; });
+    seeded += Setup.seedMissing_(tx, 'KpiTargets', SEED.kpi_targets, function (r) { return r.id; });
     var owner = Setup.seedOwner_(tx);
     if (owner) seeded++;
-    return { created: created, columnsAdded: columnsAdded, seeded: seeded, owner: owner || '' };
+    // Upgrading a Sheet that already has entries: fill the dashboard caches once.
+    var rebuilt = false;
+    if (!Db.read('MonthlySummary').length && Db.readColumns('JournalLines', ['jeId']).length) {
+      Summaries.rebuild();
+      rebuilt = true;
+    }
+    return { created: created, columnsAdded: columnsAdded, seeded: seeded, owner: owner || '', summariesRebuilt: rebuilt };
   },
 
   // Write the header if the tab is empty; otherwise add missing columns at the end.

@@ -65,6 +65,39 @@ var Db = (function () {
     return load(tab).header;
   }
 
+  // Only some columns of a tab, read as one contiguous block (for the big
+  // ledger tabs, when a dashboard needs a few columns of every row).
+  // Returns plain objects with just those columns.
+  function readColumns(tab, names) {
+    var ck = 'cols:' + tab + ':' + names.join(',');
+    if (cache[ck]) return cache[ck];
+    if (cache[tab]) {
+      cache[ck] = cache[tab].rows.map(function (r) { var o = {}; names.forEach(function (n) { o[n] = r[n]; }); return o; });
+      return cache[ck];
+    }
+    var sh = sheet(tab);
+    var lastRow = sh.getLastRow();
+    var lastCol = sh.getLastColumn();
+    if (lastRow < 2 || !lastCol) return (cache[ck] = []);
+    var hdr = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+    var idx = names.map(function (n) {
+      var i = hdr.indexOf(n);
+      if (i === -1) throw Validate.coreError('E_INTERNAL', tab + ' has no column ' + n + '. The Owner needs to run Setup.');
+      return i;
+    });
+    var lo = Math.min.apply(null, idx);
+    var hi = Math.max.apply(null, idx);
+    var values = sh.getRange(2, lo + 1, lastRow - 1, hi - lo + 1).getValues();
+    var out = [];
+    values.forEach(function (row) {
+      var o = {};
+      names.forEach(function (n, k) { o[n] = Schema.fromCell(n, row[idx[k] - lo]); });
+      if (o[names[0]] !== '') out.push(o);
+    });
+    cache[ck] = out;
+    return out;
+  }
+
   // {key: row} for tabs with a key column.
   function byKey(tab) {
     var t = load(tab);
@@ -213,7 +246,12 @@ var Db = (function () {
       return;
     }
     (tx.updates[tab] || []).forEach(function (u) {
-      if (u.match) load(tab).rows.filter(u.match).forEach(function (row) { updateRowObject(tab, row, u.fields); });
+      if (u.match) {
+        load(tab).rows.filter(u.match).forEach(function (row) {
+          if (Schema.TABS[tab].appendOnly) updateRowObject(tab, row, u.fields);
+          else writeRowObject(tab, row, u.fields);
+        });
+      }
       else updateRow(tab, u.id, u.fields);
     });
     var ups = tx.upserts[tab];
@@ -234,8 +272,12 @@ var Db = (function () {
 
   // Rewrite a whole row in one setValues (for cache tabs, not the ledger).
   function updateRowWhole(tab, id, fields) {
+    writeRowObject(tab, byKey(tab)[id], fields);
+  }
+
+  function writeRowObject(tab, row, fields) {
     var t = load(tab);
-    var row = byKey(tab)[id];
+    if (Schema.TABS[tab].appendOnly) throw Validate.coreError('E_INTERNAL', tab + ' is append-only');
     var merged = {};
     t.header.forEach(function (h) { merged[h] = h in fields ? fields[h] : row[h]; });
     var values = Schema.toRow(t.header, merged);
@@ -260,6 +302,7 @@ var Db = (function () {
     spreadsheet: spreadsheet,
     reset: reset,
     read: read,
+    readColumns: readColumns,
     header: header,
     byKey: byKey,
     get: get,

@@ -21,6 +21,9 @@ try { playwright = require('playwright'); } catch (e) {
 const { start } = require('../../scripts/dev-server.js');
 
 const SHOTS = process.env.SCREENSHOTS || '';
+// Chart.js for the dashboard comes from cdnjs. Point CHART_JS at a local copy
+// (chart.umd.js) to test real charts offline; otherwise the table fallback is tested.
+const CHART_JS = process.env.CHART_JS || '';
 let step = 0;
 async function shot(page, name) {
   if (!SHOTS) return;
@@ -30,6 +33,10 @@ async function shot(page, name) {
 
 async function signInAs(browser, base, label, viewport) {
   const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1 });
+  // No internet in tests: Chart.js comes from a local copy, or an empty script (charts fall back to tables).
+  await ctx.route('https://cdnjs.cloudflare.com/**', (route) => (CHART_JS
+    ? route.fulfill({ path: CHART_JS, contentType: 'application/javascript' })
+    : route.fulfill({ body: '/* Chart.js not available offline */', contentType: 'application/javascript' })));
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -138,7 +145,8 @@ async function noHorizontalScroll(page) {
     await owner.page.waitForSelector('text=1010 Cash in hand - Studio'); // Studio staff receive into studio cash by default
     await owner.page.waitForSelector('text=300,000.00');
     await owner.page.goto(base + '#/');
-    await owner.page.waitForSelector('text=Due in the next 14 days');
+    await owner.page.waitForSelector('h1:has-text("Dashboard")');
+    await owner.page.waitForSelector('.tile[data-kpi="C1"]');
     await shot(owner.page, 'owner-home');
     await owner.page.goto(base + '#/settings');
     await owner.page.waitForSelector('text=People');
@@ -463,6 +471,61 @@ async function noHorizontalScroll(page) {
       await fb.waitForSelector('text=have no QuickBooks name yet');
     }
     await shot(fb, 'quickbooks');
+
+    // ---- M10: dashboards for the Owner (desktop), Store and Studio (phone) ----
+    const db = (await signInAs(browser, base, 'Umar', { width: 1280, height: 900 }));
+    const dp = db.page;
+    await dp.goto(base + '#/');
+    await dp.waitForSelector('h1:has-text("Dashboard")');
+    await dp.waitForSelector('.tile[data-kpi="A1"] .value');
+    assert.equal(await dp.locator('.dashtabs a').count(), 7);
+    assert.ok(await dp.locator('.alerts li').count() >= 1, 'alerts strip');
+    await dp.waitForSelector('[data-chart="B1-trend"] ' + (CHART_JS ? 'canvas' : 'table'));
+    await shot(dp, 'dashboard-overview');
+    await dp.locator('.tile[data-kpi="B1"]').click();
+    await dp.waitForSelector('h1:has-text("Profit")');
+    await dp.goBack();
+    await dp.locator('.dashtabs a', { hasText: 'Cash' }).click();
+    await dp.waitForSelector('.tile[data-kpi="A3"]');
+    await dp.waitForSelector('[data-chart="A5"] ' + (CHART_JS ? 'canvas' : 'table'));
+    await shot(dp, 'dashboard-cash');
+    for (const [name, kpi] of [['UMSHA', 'C4'], ['Mirae', 'D3'], ['Operations', 'E1'], ['Customers', 'F1'], ['Controls', 'G4']]) {
+      await dp.locator('.dashtabs a', { hasText: name }).click();
+      await dp.waitForSelector('.tile[data-kpi="' + kpi + '"]');
+    }
+    await dp.locator('select[aria-label=Period]').selectOption('YTD');
+    await dp.waitForURL(/period=YTD/);
+    await dp.waitForSelector('.tile[data-kpi="G4"]');
+    await dp.locator('select[aria-label=Compare]').selectOption('TARGET');
+    await dp.waitForURL(/cmp=TARGET/);
+    await dp.waitForSelector('.tile[data-kpi="G4"]');
+    await dp.goto(base + '#/settings');
+    await dp.locator('table.data tr', { hasText: 'minCash' }).click();
+    const kt = dp.getByRole('dialog', { name: /Target minCash/ });
+    await kt.locator('.field', { hasText: 'Red at' }).locator('input').fill('100000000');
+    await kt.getByRole('button', { name: 'Save' }).click();
+    await kt.waitFor({ state: 'detached' });
+    assert.equal(gas.rows('KpiTargets').find((t) => t.kpi === 'minCash').redAt, 100000000);
+    await dp.goto(base + '#/dashboard?tab=CASH&period=MTD&brand=ALL&cmp=PREVIOUS');
+    await dp.waitForSelector('.tile.rag-red[data-kpi="A1"]');
+    assert.deepEqual(db.errors, [], 'browser errors: ' + db.errors.join('\n'));
+
+    const dsp = (await signInAs(browser, base, 'Ali', phone)).page;
+    await dsp.goto(base + '#/today');
+    await dsp.getByRole('link', { name: 'Dashboard' }).click();
+    await dsp.waitForSelector('.tile[data-kpi="D2"]');
+    assert.equal(await dsp.locator('.dashtabs').count(), 0, 'Store has one tab only');
+    assert.ok(!/cost|margin/i.test(await dsp.locator('#view').innerText()), 'no cost or margin for Store');
+    await noHorizontalScroll(dsp);
+    await shot(dsp, 'dashboard-store');
+
+    const dst = (await signInAs(browser, base, 'Hina', phone)).page;
+    await dst.waitForSelector('h1:has-text("Orders")');
+    await dst.getByRole('link', { name: 'Dashboard' }).click();
+    await dst.waitForSelector('.tile[data-kpi="C1"]');
+    assert.deepEqual(await dst.locator('.dashtabs a').allTextContents(), ['UMSHA (MTO)', 'Operations']);
+    await noHorizontalScroll(dst);
+    await shot(dst, 'dashboard-studio');
 
     console.log('ok - UI: book, advance, karigar, deliver, balance, receipts and journals (' + (SHOTS ? 'screenshots in ' + SHOTS : 'no screenshots') + ')');
   } catch (e) {

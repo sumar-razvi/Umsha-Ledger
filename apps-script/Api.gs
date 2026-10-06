@@ -69,6 +69,7 @@ var Api = {
       var tx = Db.begin();
       var env = { user: user, tx: tx, requestId: requestId, action: action, now: now, today: Dates.karachiDate(now), ts: Dates.karachiTimestamp(now) };
       var out = handler(payload, env) || {};
+      Summaries.apply(tx); // dashboard caches, in the same lock and commit
       var res = { ok: true, data: out.data === undefined ? null : out.data };
       var audit = out.audit || {};
       tx.append('AuditLog', [{
@@ -119,7 +120,10 @@ var Api = {
 // Report caches are keyed by a data version that every write bumps.
 var Cache = {
   bump: function () {
-    CacheService.getScriptCache().put('dataVersion', String(Date.now()), 21600);
+    // Time plus a counter: unique even for two writes in the same millisecond.
+    var c = CacheService.getScriptCache();
+    var n = Number(String(c.get('dataVersion') || '').split('.')[1] || 0) + 1;
+    c.put('dataVersion', Date.now() + '.' + n, 21600);
   },
   version: function () {
     return CacheService.getScriptCache().get('dataVersion') || '0';
