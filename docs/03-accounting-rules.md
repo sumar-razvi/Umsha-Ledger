@@ -59,6 +59,10 @@ Full seed in `seed/chart_of_accounts.csv`. Ranges:
 | `CASH_OVER_SHORT` | 6810 | Cash over / short |
 | `FX_GAIN_LOSS` | 7010 | Exchange gain / loss |
 | `ROUNDING` | 7030 | Rounding differences |
+| `RTW_SALES_STORE` | 4100 | RTW sales: store |
+| `RTW_SALES_ONLINE` | 4110 | RTW sales: online |
+| `RTW_SALES_EXHIBITION` | 4120 | RTW sales: exhibitions |
+| `COGS_FABRIC` … `COGS_OTHER` | 5010–5070 | COGS by job cost component (table below) |
 
 Each item category maps to an inventory account (`FABRIC→INV_FABRIC`, `TRIM→INV_TRIMS`, `PACKAGING→INV_PACKAGING`, `SKU→INV_FG`).
 
@@ -66,15 +70,17 @@ Each item category maps to an inventory account (`FABRIC→INV_FABRIC`, `TRIM→
 
 When a job's WIP is released, each cost line keeps its `costComponent` and goes to the matching COGS account. This gives a COGS breakdown on the P&L for free.
 
-| costComponent | COGS account |
-|---|---|
-| `FABRIC` | 5010 Fabric consumed |
-| `TRIMS` | 5020 Trims & embellishments consumed |
-| `EMBROIDERY` | 5030 Embroidery labour (karigar) |
-| `STITCHING` | 5040 Stitching & tailoring labour |
-| `OUTSOURCED` | 5050 Dyeing, printing & outsourced work |
-| `PACKAGING` | 5060 Packaging |
-| `OTHER` | 5070 Other direct costs |
+| costComponent | systemKey | Default COGS account |
+|---|---|---|
+| `FABRIC` | `COGS_FABRIC` | 5010 Fabric consumed |
+| `TRIMS` | `COGS_TRIMS` | 5020 Trims & embellishments consumed |
+| `EMBROIDERY` | `COGS_EMBROIDERY` | 5030 Embroidery labour (karigar) |
+| `STITCHING` | `COGS_STITCHING` | 5040 Stitching & tailoring labour |
+| `OUTSOURCED` | `COGS_OUTSOURCED` | 5050 Dyeing, printing & outsourced work |
+| `PACKAGING` | `COGS_PACKAGING` | 5060 Packaging |
+| `OTHER` | `COGS_OTHER` | 5070 Other direct costs |
+
+Issuing stock to a job sets `costComponent` from the item category: `FABRIC→FABRIC`, `TRIM→TRIMS`, `PACKAGING→PACKAGING`. RTW sales accounts are picked by channel: `STORE→RTW_SALES_STORE`, `ONLINE→RTW_SALES_ONLINE`, `EXHIBITION→RTW_SALES_EXHIBITION`.
 
 ## 3. Brand segment rules
 
@@ -92,7 +98,7 @@ Because the issue-to-job entry has a `SHARED` credit and a branded debit on bala
 ### Shared cost allocation (reporting only, never posted)
 P&L report option "Allocate shared costs" splits each `SHARED` P&L line between UMSHA and MIRAE using the key in `Settings.allocationKey`:
 - `REVENUE` (default): by each brand's net revenue in the period
-- `FIXED`: by `Settings.allocationUmshaPct` (e.g. 6000 bps = 60%)
+- `FIXED`: by `Settings.allocationUmshaPctBps` (e.g. 6000 bps = 60%)
 - `NONE`: show SHARED column
 
 This is a presentation choice, so it never creates journal entries. Defensible: it can be changed without restating the books.
@@ -236,7 +242,7 @@ Dr  CUSTOMER_ADV   [UMSHA]  A
   Cr Bank/Cash     [UMSHA]  R
   Cr CANCEL_INCOME [UMSHA]  F
 ```
-WIP: either return materials to stock (reverse R7) or write off `Dr 5070 Other direct costs / Cr WIP`.
+WIP: either return materials to stock (reverse R7) or write off `Dr COGS_OTHER (5070) / Cr WIP`.
 
 ### R18. Owner drawings / family payments
 ```

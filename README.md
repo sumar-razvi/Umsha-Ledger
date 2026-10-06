@@ -19,3 +19,12 @@ In-house double-entry accounting and operations system for UMSHA (made-to-order 
 | `docs/09-open-decisions.md` | Questions for the family and tax advisor, with build defaults |
 | `docs/10-dashboard-kpis.md` | Dashboard tabs and 60+ KPI definitions with formulas |
 | `seed/` | Chart of accounts (with QuickBooks mapping), tax codes, settings |
+
+## Development
+
+Needs Node 20+. No dependencies.
+
+```
+npm test        # node --test: all golden scenarios for completed milestones
+npm run build   # regenerate apps-script/Core.gs from /core (commit the result)
+```

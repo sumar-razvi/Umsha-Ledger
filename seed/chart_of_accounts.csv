@@ -19,7 +19,7 @@ code,name,type,subType,normalBalance,isContra,systemKey,defaultBrand,isMoney,mon
 1510,Advance income tax / WHT suffered,ASSET,CURRENT,DEBIT,FALSE,,SHARED,FALSE,,Advance Income Tax
 1600,Prepayments & security deposits,ASSET,CURRENT,DEBIT,FALSE,,SHARED,FALSE,,Prepayments and Deposits
 1700,Machinery & equipment,ASSET,FIXED,DEBIT,FALSE,,SHARED,FALSE,,Machinery and Equipment
-1710,"Furniture, fixtures 1710,Furniture, fixtures & store fit-out, store fit-out",ASSET,FIXED,DEBIT,FALSE,,SHARED,FALSE,,Furniture and Fixtures
+1710,"Furniture, fixtures & store fit-out",ASSET,FIXED,DEBIT,FALSE,,SHARED,FALSE,,Furniture and Fixtures
 1720,IT equipment,ASSET,FIXED,DEBIT,FALSE,,SHARED,FALSE,,IT Equipment
 1790,Accumulated depreciation,ASSET,FIXED,CREDIT,TRUE,,SHARED,FALSE,,Accumulated Depreciation
 2010,Accounts payable,LIABILITY,CURRENT,CREDIT,FALSE,AP,SHARED,FALSE,,Accounts Payable (A/P)
@@ -37,17 +37,17 @@ code,name,type,subType,normalBalance,isContra,systemKey,defaultBrand,isMoney,mon
 4020,MTO sales - formals,REVENUE,,CREDIT,FALSE,,UMSHA,FALSE,,Sales - MTO Formals
 4030,Alterations & services,REVENUE,,CREDIT,FALSE,,UMSHA,FALSE,,Sales - Alterations
 4040,Order cancellation income,REVENUE,,CREDIT,FALSE,CANCEL_INCOME,UMSHA,FALSE,,Cancellation Income
-4100,RTW sales - store,REVENUE,,CREDIT,FALSE,,MIRAE,FALSE,,Sales - RTW Store
-4110,RTW sales - online,REVENUE,,CREDIT,FALSE,,MIRAE,FALSE,,Sales - RTW Online
-4120,RTW sales - exhibitions,REVENUE,,CREDIT,FALSE,,MIRAE,FALSE,,Sales - RTW Exhibitions
+4100,RTW sales - store,REVENUE,,CREDIT,FALSE,RTW_SALES_STORE,MIRAE,FALSE,,Sales - RTW Store
+4110,RTW sales - online,REVENUE,,CREDIT,FALSE,RTW_SALES_ONLINE,MIRAE,FALSE,,Sales - RTW Online
+4120,RTW sales - exhibitions,REVENUE,,CREDIT,FALSE,RTW_SALES_EXHIBITION,MIRAE,FALSE,,Sales - RTW Exhibitions
 4900,Sales returns & discounts,REVENUE,,DEBIT,TRUE,SALES_RETURNS,MIRAE,FALSE,,Sales Returns and Discounts
-5010,Fabric consumed,COGS,,DEBIT,FALSE,,UMSHA,FALSE,,COGS - Fabric
-5020,Trims & embellishments consumed,COGS,,DEBIT,FALSE,,UMSHA,FALSE,,COGS - Trims
-5030,Embroidery labour (karigar),COGS,,DEBIT,FALSE,,UMSHA,FALSE,,COGS - Embroidery Labour
-5040,Stitching & tailoring labour,COGS,,DEBIT,FALSE,,UMSHA,FALSE,,COGS - Stitching Labour
-5050,Dyeing printing & outsourced work,COGS,,DEBIT,FALSE,,UMSHA,FALSE,,COGS - Outsourced
-5060,Packaging,COGS,,DEBIT,FALSE,,SHARED,FALSE,,COGS - Packaging
-5070,Other direct costs,COGS,,DEBIT,FALSE,,UMSHA,FALSE,,COGS - Other Direct
+5010,Fabric consumed,COGS,,DEBIT,FALSE,COGS_FABRIC,UMSHA,FALSE,,COGS - Fabric
+5020,Trims & embellishments consumed,COGS,,DEBIT,FALSE,COGS_TRIMS,UMSHA,FALSE,,COGS - Trims
+5030,Embroidery labour (karigar),COGS,,DEBIT,FALSE,COGS_EMBROIDERY,UMSHA,FALSE,,COGS - Embroidery Labour
+5040,Stitching & tailoring labour,COGS,,DEBIT,FALSE,COGS_STITCHING,UMSHA,FALSE,,COGS - Stitching Labour
+5050,Dyeing printing & outsourced work,COGS,,DEBIT,FALSE,COGS_OUTSOURCED,UMSHA,FALSE,,COGS - Outsourced
+5060,Packaging,COGS,,DEBIT,FALSE,COGS_PACKAGING,SHARED,FALSE,,COGS - Packaging
+5070,Other direct costs,COGS,,DEBIT,FALSE,COGS_OTHER,UMSHA,FALSE,,COGS - Other Direct
 5100,Cost of goods sold - RTW,COGS,,DEBIT,FALSE,COGS_RTW,MIRAE,FALSE,,COGS - RTW
 5900,Inventory adjustments & shrinkage,COGS,,DEBIT,FALSE,SHRINKAGE,SHARED,FALSE,,Inventory Shrinkage
 6010,Salaries & wages,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Salaries and Wages

@@ -82,6 +82,7 @@ Do not conflate UMSHA MTO workflows with Mirae RTW store workflows. They share a
 
 - Plain ES2020. No transpiler. Apps Script V8 runtime supports it.
 - `/core` files: each exports pure functions via `if (typeof module !== 'undefined') module.exports = {...}` so the build script can strip it.
+- `/core` files import siblings only as `const Money = require('./money.js');` (variable = file name in PascalCase). The build wraps each file in a namespace of that name in `Core.gs` (`Money.parseRupees(...)` works in both Node and Apps Script) and fails on any other import style. `npm test` fails if `Core.gs` is stale, so run `npm run build` after changing `/core`.
 - IDs: human-readable, prefixed, year-scoped, zero-padded: `INV-2026-00042`, `BILL-2026-00007`, `JOB-2026-00113`, `JE-2026-00981`. Generated server-side from the `Sequences` tab under lock.
 - Dates: ISO `YYYY-MM-DD` strings in storage. Timezone `Asia/Karachi` for all server date logic.
 - Sheets I/O: read whole ranges with `getValues()` once, never cell-by-cell in loops. Write with `setValues()` in batches. Append via `getRange(lastRow+1, 1, n, cols).setValues()`.

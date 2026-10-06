@@ -12,6 +12,20 @@ Conventions:
 - Soft delete only via `isActive` / `status`. No row deletion anywhere.
 - `createdBy`, `createdAt` on every document tab.
 
+## ID formats (`core/ids.js`)
+
+All IDs are allocated server-side from the `Sequences` tab under the script lock.
+
+| Kind | Format | Sequence key | Example |
+|---|---|---|---|
+| Documents and ledger | `PREFIX-YYYY-NNNNN` (year of the document date, see D-18) | `PREFIX-YYYY` | `INV-2026-00042` |
+| Master data | `PREFIX-` + zero-padded number, width per prefix | `PREFIX` | `CUS-00001`, `FAB-0001`, `FAM-001` |
+| Child rows (lines) | parent ID + `-` + 2-digit line no. | none | `JE-2026-00981-01` |
+
+Document prefixes: `JE` journal, `INV` invoice, `BILL` bill, `JOB` job, `PAY` payment, `SALE` sale/return/exchange, `SM` stock move, `CNT` stock count, `CUP` cash-up, `REC` bank rec, `ATT` attachment, `AUD` audit log.
+Master prefixes and widths: `CUS` 5, `VEN` 5, `FAM` 3, `FAB` 4, `TRM` 4, `PKG` 4, `SKU` 6 (SKUs may instead use `SKU-<style>-<size>-<colour>`), `USR` 3.
+Numbers widen past the pad width rather than wrap (`INV-2026-100000`).
+
 ---
 
 ## Configuration tabs
@@ -27,6 +41,7 @@ Conventions:
 | timezone | Asia/Karachi | |
 | allocationKey | REVENUE | REVENUE / FIXED / NONE |
 | allocationUmshaPctBps | 6000 | used when FIXED |
+| currencyGrouping | STANDARD | STANDARD (`Rs 125,000`) or INDIAN (`Rs 1,25,000`) |
 | rtwPricesIncludeTax | TRUE | |
 | allowNegativeStock | FALSE | |
 | defaultMtoRevenueAccount | 4010 | |
@@ -110,8 +125,8 @@ header + `jobId, dueDate, netPaisa, taxPaisa, grossPaisa, taxCodeId, taxOverride
 `id, invoiceId, description, itemId, qty, unitPricePaisa, discountPaisa, netPaisa, revenueAccount`
 
 ### `Sales` (RTW store / online / exhibition sales)
-header + `channel, store, netPaisa, taxPaisa, grossPaisa, discountPaisa, pricesIncludeTax, fbrInvoiceNo, originalSaleId` (originalSaleId set for returns)
-- `kind` ∈ `SALE, RETURN, EXCHANGE`
+header + `kind, channel, store, netPaisa, taxPaisa, grossPaisa, discountPaisa, pricesIncludeTax, fbrInvoiceNo, originalSaleId` (originalSaleId set for returns)
+- `kind` ∈ `SALE, RETURN, EXCHANGE`; `channel` ∈ `STORE, ONLINE, EXHIBITION`
 
 ### `SaleLines`
 `id, saleId, itemId, qty, unitPricePaisa, discountPaisa, netPaisa, taxPaisa, unitCostMicro, costPaisa, restock`

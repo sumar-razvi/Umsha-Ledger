@@ -7,6 +7,7 @@ fiscalYearStartMonth,7
 timezone,Asia/Karachi
 allocationKey,REVENUE
 allocationUmshaPctBps,6000
+currencyGrouping,STANDARD
 rtwPricesIncludeTax,TRUE
 allowNegativeStock,FALSE
 defaultMtoRevenueAccount,4010
