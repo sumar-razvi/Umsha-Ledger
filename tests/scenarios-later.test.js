@@ -209,3 +209,13 @@ describe('R23 year-end close', () => {
     assert.equal(Posting.fiscalYearStartFor('2027-06-30', 7), '2026-07-01');
   });
 });
+
+describe('inventory reconciliation (M5.7)', () => {
+  test('inventory GL equals stock valuation per account after T01-T12', () => {
+    const { book } = runThroughT12();
+    const r = Reports.inventoryReconciliation(book.lines, book.stockMoves, book.acc, book.items, {});
+    assert.ok(r.reconciled);
+    assert.deepEqual(r.rows.map((x) => [x.systemKey, x.differencePaisa]), [['INV_FABRIC', 0], ['INV_TRIMS', 0], ['INV_PACKAGING', 0], ['INV_FG', 0]]);
+    assert.equal(r.rows.find((x) => x.systemKey === 'INV_FG').stockPaisa, 10000000 - 833334 + 277778 - 277778);
+  });
+});

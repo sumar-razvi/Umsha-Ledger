@@ -91,3 +91,23 @@ describe('stock ledger', () => {
     assert.deepEqual(l.updates(), [l.balance('F')]);
   });
 });
+
+describe('movement ledger (M5)', () => {
+  test('running qty, value and average after each move, with an opening balance', () => {
+    const l = Inventory.createStockLedger({});
+    const moves = [];
+    const tag = (m, date) => moves.push(Object.assign({ date, itemId: 'F' }, m));
+    tag(l.receive('F', 50, 10000000, 'PURCHASE'), '2026-10-02');
+    tag(l.issue('F', 12, 'ISSUE'), '2026-10-03');
+    tag(l.receive('F', 30, 7200000, 'PURCHASE'), '2026-10-04');
+    tag(l.issue('F', 10, 'ISSUE'), '2026-10-04');
+    moves.push({ date: '2026-10-04', itemId: 'X', qty: 1, valuePaisa: 5, moveType: 'PURCHASE' });
+    const r = Inventory.movementLedger(moves, 'F', { from: '2026-10-04' });
+    assert.deepEqual(r.opening, { itemId: 'F', qty: 38, avgCostMicro: 2000000000, valuePaisa: 7600000 });
+    assert.deepEqual(r.rows.map((x) => [x.moveType, x.qtyAfter, x.valueAfterPaisa, x.avgCostMicroAfter]), [
+      ['PURCHASE', 68, 14800000, 2176470588],
+      ['ISSUE', 58, 12623529, 2176470588],
+    ]);
+    assert.deepEqual(r.closing, l.balance('F'));
+  });
+});

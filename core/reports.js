@@ -326,6 +326,21 @@ function stockValuation(stockMoves, items, opts) {
   return { rows: rows, byAccountKey: byAccountKey, totalPaisa: total };
 }
 
+// Inventory GL against the stock valuation, account by account (M5.7).
+// Returns {asOf, rows: [{systemKey, code, name, glPaisa, stockPaisa, differencePaisa}], reconciled}.
+function inventoryReconciliation(lines, stockMoves, acc, items, opts) {
+  const o = opts || {};
+  const bal = accountBalances(lines, { asOf: o.asOf });
+  const val = stockValuation(stockMoves, items, { asOf: o.asOf });
+  const rows = Validate.INVENTORY_KEYS.map(function (k) {
+    const a = acc.accountsBySystemKey[k];
+    const gl = a ? bal[a.code] || 0 : 0;
+    const stock = val.byAccountKey[k] || 0;
+    return { systemKey: k, code: a ? a.code : '', name: a ? a.name : k, glPaisa: gl, stockPaisa: stock, differencePaisa: gl - stock };
+  });
+  return { asOf: o.asOf || '', rows: rows, items: val.rows, reconciled: rows.every(function (r) { return r.differencePaisa === 0; }) };
+}
+
 // ---------- Ageing ----------
 
 function daysBetween(a, b) {
@@ -395,6 +410,7 @@ if (typeof module !== 'undefined') module.exports = {
   jobCostSheet,
   jobProfitability,
   stockValuation,
+  inventoryReconciliation,
   ageing,
   integrityChecks,
 };

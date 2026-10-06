@@ -223,6 +223,78 @@ async function noHorizontalScroll(page) {
     await noHorizontalScroll(sp);
     assert.ok(gas.rows('Bills').some((b) => b.grossPaisa === 75000 && b.balancePaisa === 0));
 
+    // ---- M5: Studio makes SKUs, runs a batch and completes it ----
+    const s5 = (await signInAs(browser, base, 'Hina', phone)).page;
+    for (const [code, name] of [['SKU-AYLA-S', 'Ayla kurta S'], ['SKU-AYLA-M', 'Ayla kurta M']]) {
+      await s5.goto(base + '#/inventory');
+      await s5.getByRole('button', { name: 'New item' }).click();
+      const it = s5.getByRole('dialog', { name: 'New item' });
+      await it.locator('select').first().selectOption('SKU');
+      await it.locator('label:has-text("Name") input').fill(name);
+      await it.getByPlaceholder('Optional, e.g. SKU-AYLA-M-RED').fill(code);
+      await it.locator('input[aria-label="Sale price"]').fill('9440');
+      await it.getByRole('button', { name: 'Save' }).click();
+      await it.waitFor({ state: 'detached' });
+    }
+    await s5.goto(base + '#/batches/new');
+    await s5.getByPlaceholder('e.g. Winter 26 kurtas, run 1').fill('Ayla run 1');
+    await s5.locator('select[aria-label=SKU]').selectOption('SKU-AYLA-S');
+    await s5.locator('input[aria-label="Planned pieces"]').fill('10');
+    await s5.getByRole('button', { name: '+ Another SKU' }).click();
+    await s5.locator('select[aria-label=SKU]').nth(1).selectOption('SKU-AYLA-M');
+    await s5.locator('input[aria-label="Planned pieces"]').nth(1).fill('20');
+    await s5.getByRole('button', { name: 'Start batch' }).click();
+    await s5.waitForSelector('h1:has-text("Ayla run 1")');
+    await s5.getByRole('button', { name: 'Issue materials' }).click();
+    const iss = s5.getByRole('dialog', { name: /Issue materials/ });
+    await iss.locator('select').first().selectOption(await iss.locator('option', { hasText: 'Dabka' }).getAttribute('value'));
+    await iss.locator('input[aria-label=Quantity]').fill('100');
+    await iss.getByRole('button', { name: 'Issue' }).click();
+    await iss.waitFor({ state: 'detached' });
+    await s5.getByRole('button', { name: 'Log karigar work' }).click();
+    const lk = s5.getByRole('dialog', { name: /Log karigar work/ });
+    await lk.getByPlaceholder('Search karigar').fill('Rafiq');
+    await lk.getByRole('button', { name: /Rafiq/ }).click();
+    await lk.locator('input[type=number]').fill('30');
+    await lk.locator('input[aria-label="Rate per piece"]').fill('900');
+    await lk.getByRole('button', { name: 'Log work' }).click();
+    await lk.waitFor({ state: 'detached' });
+    await s5.waitForSelector('.kv >> text=Rs 30,000'); // 100 g dabka at Rs 30 + 30 x 900
+    await s5.getByRole('button', { name: 'Complete batch' }).click();
+    const cb = s5.getByRole('dialog', { name: /Complete/ });
+    await cb.getByText('10,000.00', { exact: true }).waitFor(); // 10 of 30 pieces, equal weights
+    await cb.getByText('20,000.00', { exact: true }).waitFor();
+    await shot(s5, 'complete-batch');
+    await cb.getByRole('button', { name: 'Complete batch' }).click();
+    await cb.waitFor({ state: 'detached' });
+    await s5.waitForSelector('text=Moved into finished stock');
+    const ayM = gas.rows('ItemBalances').find((b) => b.itemId === 'SKU-AYLA-M');
+    assert.deepEqual([ayM.qty, ayM.valuePaisa], [20, 2000000]);
+    await s5.goto(base + '#/inventory?category=SKU');
+    await s5.waitForSelector('text=Ayla kurta M');
+    await noHorizontalScroll(s5);
+
+    // ---- M5: Finance counts blind, reviews, posts; valuation reconciles ----
+    const f5 = (await signInAs(browser, base, 'Sara', { width: 1280, height: 900 })).page;
+    await f5.goto(base + '#/inventory/count');
+    await f5.locator('select').first().selectOption('SKU');
+    await f5.waitForSelector('text=Ayla kurta M');
+    assert.equal(await f5.locator('text=20 PC').count(), 0, 'system quantities must stay hidden while counting');
+    await f5.locator('input[aria-label="Counted Ayla kurta M"]').fill('19');
+    await f5.locator('input[aria-label="Counted Ayla kurta S"]').fill('10');
+    await f5.getByRole('button', { name: 'Review differences' }).click();
+    await f5.waitForSelector('td:has-text("-1")');
+    await shot(f5, 'count-review');
+    await f5.getByRole('button', { name: 'Post count' }).click();
+    await f5.waitForSelector('h1:has-text("Inventory")');
+    assert.equal(gas.rows('ItemBalances').find((b) => b.itemId === 'SKU-AYLA-M').qty, 19);
+    await f5.goto(base + '#/inventory/valuation');
+    await f5.waitForSelector('text=Stock on hand agrees with the ledger to the paisa.');
+    await shot(f5, 'valuation');
+    await f5.goto(base + '#/inventory/items/SKU-AYLA-M');
+    await f5.waitForSelector('text=Batch output');
+    await f5.waitForSelector('text=Stock count');
+
     console.log('ok - UI: book, advance, karigar, deliver, balance, receipts and journals (' + (SHOTS ? 'screenshots in ' + SHOTS : 'no screenshots') + ')');
   } catch (e) {
     console.error('not ok - UI test failed:', e.message);

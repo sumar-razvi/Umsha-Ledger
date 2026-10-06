@@ -389,8 +389,17 @@ var Actions = {
       delete e.dr; delete e.cr;
     });
     var rate = job.type === 'MTO_ORDER' ? jobRateBps_(ctx, job) : 0;
+    var moves = Db.read('StockMoves');
+    var items = Db.byKey('Items');
+    var issues = moves.filter(function (m) { return m.moveType === 'ISSUE' && m.jobId === job.id; }).map(function (m) {
+      var back = 0;
+      moves.forEach(function (x) { if (x.sourceMoveId === m.id && x.moveType === 'RETURN_TO_STOCK') back += Inventory.toMilli(x.qty); });
+      var it = items[m.itemId] || {};
+      return { moveId: m.id, date: m.date, itemId: m.itemId, itemName: it.name || m.itemId, unit: it.unit || '', qty: -m.qty, valuePaisa: -m.valuePaisa, returnableQty: Inventory.fromMilli(-Inventory.toMilli(m.qty) - back) };
+    });
     return {
       job: job,
+      issues: issues,
       contact: job.contactId ? Db.get('Contacts', job.contactId) : null,
       lines: Db.read('JobLines').filter(function (l) { return l.jobId === job.id; }).sort(function (a, b) { return a.sortOrder - b.sortOrder; }),
       costSheet: cost,
@@ -781,6 +790,48 @@ var Actions = {
     if (!a) throw Validate.coreError('E_NOT_FOUND', 'Attachment ' + p.id + ' not found', 'id');
     var blob = DriveApp.getFileById(a.driveFileId).getBlob();
     return { id: a.id, fileName: a.fileName, mimeType: a.mimeType, dataBase64: Utilities.base64Encode(blob.getBytes()) };
+  },
+
+  // ---------- inventory (M5) ----------
+
+  'stock.movements': function (p) {
+    var item = Db.get('Items', need_(p.itemId, 'itemId', 'Choose an item'));
+    if (!item) throw Validate.coreError('E_NOT_FOUND', 'Item ' + p.itemId + ' not found', 'itemId');
+    var r = Inventory.movementLedger(Db.read('StockMoves'), item.id, { from: p.from, to: p.to });
+    r.item = item;
+    return r;
+  },
+
+  'stock.valuation': function (p) {
+    var acc = Validate.indexAccounts(Db.read('Accounts'));
+    return Reports.inventoryReconciliation(Db.read('JournalLines'), Db.read('StockMoves'), acc, Db.byKey('Items'), { asOf: p.asOf || Dates.karachiDate() });
+  },
+
+  'jobs.completeBatch': function (p, env) {
+    var ctx = loadCtx_({ jobs: true, ledger: true, stock: true });
+    var entry = Posting.completeBatch(Object.assign({}, p, { date: need_(p.date, 'date', 'Enter the date') }), ctx);
+    var ids = postEntry_(env, entry);
+    return {
+      data: Object.assign({ jeId: ids.jeId }, entry.doc),
+      audit: { docType: 'JOB', docId: p.jobId, summary: 'Batch ' + p.jobId + ' completed: ' + entry.doc.outputs.length + ' SKU(s), ' + Money.formatPaisa(entry.doc.totalCostPaisa) },
+    };
+  },
+
+  // Blind count: the page hides system quantities until review; the server
+  // compares with its own balances at posting time (R15).
+  'stock.count.post': function (p, env) {
+    var ctx = loadCtx_({ stock: true });
+    var date = need_(p.date, 'date', 'Enter the count date');
+    var docId = env.tx.nextDocId('CNT', date);
+    var entry = Posting.postStockCount(Object.assign({}, p, { docId: docId }), ctx);
+    var ids = postEntry_(env, entry);
+    env.tx.append('StockCounts', [{ id: docId, date: date, location: p.location || '', status: 'POSTED', jeId: ids.jeId, createdBy: env.user.email, createdAt: env.ts }]);
+    env.tx.append('StockCountLines', entry.doc.lines.map(function (l, i) { return Object.assign({ id: Ids.formatLineId(docId, i + 1), countId: docId }, l); }));
+    var net = entry.doc.lines.reduce(function (s, l) { return s + l.valuePaisa; }, 0);
+    return {
+      data: { countId: docId, jeId: ids.jeId, lines: entry.doc.lines, netValuePaisa: net },
+      audit: { docType: 'STOCK_COUNT', docId: docId, summary: 'Stock count: ' + entry.doc.lines.filter(function (l) { return l.diffQty; }).length + ' difference(s), net ' + Money.formatPaisa(net) },
+    };
   },
 
   // ---------- ledger ----------

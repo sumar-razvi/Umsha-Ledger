@@ -861,6 +861,25 @@ function rebuildItemBalances(stockMoves) {
   return out;
 }
 
+// One item's movements in posting order, each with the running quantity,
+// value and average after it (the item movement ledger, docs/06 Inventory).
+// opts: {from, to} only filter what is returned; balances run from the first move.
+function movementLedger(stockMoves, itemId, opts) {
+  const o = opts || {};
+  const st = emptyState();
+  const rows = [];
+  let opening = null;
+  stockMoves.forEach(function (m) {
+    if (m.itemId !== itemId) return;
+    if (o.from && m.date < o.from) { applyMove(st, m); return; }
+    if (opening === null) opening = balanceFromState(itemId, st);
+    applyMove(st, m);
+    if (o.to && m.date > o.to) return;
+    rows.push(Object.assign({}, m, { qtyAfter: fromMilli(st.qtyMilli), valueAfterPaisa: st.valuePaisa, avgCostMicroAfter: st.avgCostMicro }));
+  });
+  return { itemId: itemId, opening: opening || balanceFromState(itemId, st), rows: rows, closing: balanceFromState(itemId, st) };
+}
+
 // A working copy of item balances for one entry. Each operation returns the
 // stock move it made; updates() returns the new balances of touched items.
 function createStockLedger(itemBalances, opts) {
@@ -956,6 +975,7 @@ return {
   itemBrand,
   applyMove,
   rebuildItemBalances,
+  movementLedger,
   createStockLedger,
 };
 })();
@@ -3220,6 +3240,21 @@ function stockValuation(stockMoves, items, opts) {
   return { rows: rows, byAccountKey: byAccountKey, totalPaisa: total };
 }
 
+// Inventory GL against the stock valuation, account by account (M5.7).
+// Returns {asOf, rows: [{systemKey, code, name, glPaisa, stockPaisa, differencePaisa}], reconciled}.
+function inventoryReconciliation(lines, stockMoves, acc, items, opts) {
+  const o = opts || {};
+  const bal = accountBalances(lines, { asOf: o.asOf });
+  const val = stockValuation(stockMoves, items, { asOf: o.asOf });
+  const rows = Validate.INVENTORY_KEYS.map(function (k) {
+    const a = acc.accountsBySystemKey[k];
+    const gl = a ? bal[a.code] || 0 : 0;
+    const stock = val.byAccountKey[k] || 0;
+    return { systemKey: k, code: a ? a.code : '', name: a ? a.name : k, glPaisa: gl, stockPaisa: stock, differencePaisa: gl - stock };
+  });
+  return { asOf: o.asOf || '', rows: rows, items: val.rows, reconciled: rows.every(function (r) { return r.differencePaisa === 0; }) };
+}
+
 // ---------- Ageing ----------
 
 function daysBetween(a, b) {
@@ -3289,6 +3324,7 @@ return {
   jobCostSheet,
   jobProfitability,
   stockValuation,
+  inventoryReconciliation,
   ageing,
   integrityChecks,
 };

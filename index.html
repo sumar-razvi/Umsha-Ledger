@@ -539,9 +539,9 @@ const CONFIG = {
 
   // ---------- shell ----------
   const NAV = {
-    OWNER: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/soon/store'], ['Purchases', '/purchases'], ['Inventory', '/soon/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Settings', '/settings']],
-    FINANCE: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/soon/store'], ['Purchases', '/purchases'], ['Inventory', '/soon/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Journals', '/journals']],
-    STUDIO: [['Orders', '/orders'], ['Customers', '/customers'], ['Inventory', '/soon/inventory'], ['Karigars', '/karigars']],
+    OWNER: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/soon/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Settings', '/settings']],
+    FINANCE: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/soon/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Journals', '/journals']],
+    STUDIO: [['Orders', '/orders'], ['Customers', '/customers'], ['Inventory', '/inventory'], ['Batches', '/batches'], ['Karigars', '/karigars']],
     STORE: [['New sale', '/soon/sale'], ['Returns', '/soon/returns'], ['Today', '/soon/today'], ['Cash-up', '/soon/cashup'], ['Petty expense', '/purchases/expense']],
     VIEWER: [['Reports', '/soon/reports'], ['Journals', '/journals']],
   };
@@ -736,6 +736,7 @@ const CONFIG = {
     if (j.status === 'DELIVERED' && d.invoice && d.invoice.balancePaisa > 0 && can('payments.receive')) actions.appendChild(h('button', { type: 'button', class: 'primary', onclick: () => balanceSheet(d) }, 'Receive balance'));
     if ((open || j.status === 'DELIVERED') && can('jobs.issueStock')) actions.appendChild(h('button', { type: 'button', onclick: () => issueSheet(d) }, 'Issue materials'));
     if ((open || j.status === 'DELIVERED') && can('karigar.logWork')) actions.appendChild(h('button', { type: 'button', onclick: () => karigarSheet(d) }, 'Log karigar work'));
+    if (open && can('jobs.returnStock') && d.issues.some((i) => i.returnableQty > 0)) actions.appendChild(h('button', { type: 'button', onclick: () => returnSheet(d) }, 'Return materials'));
     if (open && can('jobs.update')) {
       actions.appendChild(h('button', { type: 'button', onclick: () => chargeSheet(d) }, 'Add charge / discount'));
       const next = { OPEN: ['IN_PRODUCTION', 'Start production'], IN_PRODUCTION: ['READY', 'Mark ready'] }[j.status];
@@ -1628,8 +1629,257 @@ const CONFIG = {
     ]);
   }
 
+
+  // ---------- inventory (M5) ----------
+  const CATEGORY_LABEL = { FABRIC: 'Fabric', TRIM: 'Trims', PACKAGING: 'Packaging', SKU: 'Finished (Mirae SKUs)' };
+  const MOVE_LABEL = { PURCHASE: 'Bought', ISSUE: 'Issued to job', RETURN_TO_STOCK: 'Returned from job', BATCH_OUTPUT: 'Batch output', SALE: 'Sold', SALE_RETURN: 'Customer return', ADJUSTMENT: 'Stock count', OPENING: 'Opening stock', REVERSAL: 'Reversal' };
+  const unitCost = (micro) => rs(Money.divRoundHalfEven(micro || 0, Inventory.MICRO), { decimals: 'ALWAYS' });
+
+  route('/inventory', async (view, args, params) => {
+    const cat = params.get('category') || 'all';
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Inventory'), h('div', { class: 'actions' },
+      can('items.upsert') ? h('button', { type: 'button', class: 'primary', onclick: () => itemSheet() }, 'New item') : null,
+      can('stock.count.post') ? h('a', { class: 'btn', href: '#/inventory/count' }, 'Stock count') : null,
+      can('stock.valuation') ? h('a', { class: 'btn', href: '#/inventory/valuation' }, 'Valuation') : null,
+      can('jobs.completeBatch') ? h('a', { class: 'btn', href: '#/batches' }, 'Batches') : null)));
+    view.appendChild(h('div', { class: 'chips' }, [['all', 'All']].concat(Object.entries(CATEGORY_LABEL)).map(([k, l]) => h('button', { type: 'button', class: 'chip' + (k === cat ? ' on' : ''), onclick: () => go('#/inventory?category=' + k) }, l))));
+    const items = await api('items.search', Object.assign({ limit: 500 }, cat === 'all' ? {} : { category: cat }));
+    const low = (i) => i.reorderLevel !== '' && i.reorderLevel !== null && i.qty <= Number(i.reorderLevel);
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'name', label: 'Item', render: (i) => h('span', {}, i.name, low(i) ? h('span', { class: 'status READY', style: 'margin-left:6px' }, 'Low') : null, h('div', { class: 'muted small' }, i.id)) },
+      { key: 'category', label: 'Kind', opt: true, render: (i) => CATEGORY_LABEL[i.category] },
+      { key: 'qty', label: 'In stock', num: true, render: (i) => i.qty + ' ' + i.unit, csv: (i) => i.qty },
+      { key: 'avgCostMicro', label: 'Avg cost', num: true, opt: true, render: (i) => unitCost(i.avgCostMicro), csv: (i) => Money.toRupeeString(Money.divRoundHalfEven(i.avgCostMicro || 0, Inventory.MICRO)) },
+      { key: 'valuePaisa', label: 'Value', money: true },
+    ], items, { onRow: (i) => go('#/inventory/items/' + i.id), csv: 'stock', empty: 'No items yet.', foot: { name: 'Total', valuePaisa: items.reduce((t, i) => t + (i.valuePaisa || 0), 0) } })));
+  });
+
+  function itemSheet(item) {
+    const box = h('div');
+    const cat = h('select', { disabled: !!item }, Object.entries(CATEGORY_LABEL).map(([k, l]) => h('option', { value: k, selected: item && item.category === k }, l)));
+    const name = h('input', { value: item ? item.name : '' });
+    const unit = h('select', {}, [['M', 'Metres'], ['PC', 'Pieces'], ['G', 'Grams'], ['SET', 'Sets']].map(([k, l]) => h('option', { value: k, selected: item && item.unit === k }, l)));
+    const reorder = h('input', { type: 'number', step: '0.001', min: '0', value: item ? item.reorderLevel : '', placeholder: 'Warn when stock falls to this' });
+    const id = h('input', { placeholder: 'Optional, e.g. SKU-AYLA-M-RED', disabled: !!item, value: item ? item.id : '' });
+    const style = h('input', { value: item ? item.style : '' }); const size = h('input', { value: item ? item.size : '' }); const colour = h('input', { value: item ? item.colour : '' });
+    const collection = h('input', { value: item ? item.collection : '' }); const barcode = h('input', { value: item ? item.barcode : '', inputMode: 'numeric' });
+    const price = moneyInput({ label: 'Sale price', value: item && item.salePricePaisa !== '' ? item.salePricePaisa : null });
+    const tax = h('select', {}, h('option', { value: '' }, 'No sales tax'), salesTaxCodes().map((t) => h('option', { value: t.id, selected: item ? item.taxCodeId === t.id : t.id === 'ST-STD' }, t.name)));
+    const sku = h('div', {}, field('SKU code', id), h('div', { class: 'row' }, field('Style', style), field('Size', size), field('Colour', colour)),
+      h('div', { class: 'row' }, field('Collection', collection), field('Barcode', barcode)), h('div', { class: 'row' }, field('Sale price (incl. tax if Mirae prices include tax)', price), field('Sales tax', tax)));
+    const toggle = () => { sku.classList.toggle('hidden', cat.value !== 'SKU'); if (!item) unit.value = { FABRIC: 'M', TRIM: 'PC', PACKAGING: 'PC', SKU: 'PC' }[cat.value]; };
+    cat.addEventListener('change', toggle);
+    sheet(item ? 'Edit ' + item.name : 'New item', h('div', {}, box, h('div', { class: 'row' }, field('Kind', cat), field('Unit', unit)), field('Name', name), field('Reorder level', reorder), sku), (close) => [
+      h('button', { type: 'button', onclick: close }, 'Cancel'),
+      h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+        try {
+          const payload = { category: cat.value, name: name.value, unit: unit.value, reorderLevel: reorder.value };
+          if (item) payload.id = item.id; else if (cat.value === 'SKU' && id.value.trim()) payload.id = id.value.trim();
+          if (cat.value === 'SKU') Object.assign(payload, { style: style.value, size: size.value, colour: colour.value, collection: collection.value, barcode: barcode.value, salePricePaisa: price.value(), taxCodeId: tax.value });
+          const r = await submitting(e.currentTarget, box, () => save('items.upsert', payload, 'Item ' + name.value));
+          close();
+          if (r) { toast('Saved ' + r.item.id); render(); }
+        } catch (err) { /* shown */ }
+      } }, 'Save'),
+    ]);
+    toggle();
+  }
+
+  route('/inventory/items/:id', async (view, [id]) => {
+    const [item, led] = await Promise.all([api('items.get', { id }), api('stock.movements', { itemId: id })]);
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, item.name), h('span', { class: 'muted' }, item.id),
+      can('items.upsert') ? h('button', { type: 'button', onclick: () => itemSheet(item) }, 'Edit') : null));
+    view.appendChild(h('div', { class: 'tiles' }, tile('In stock', item.qty + ' ' + item.unit), tile('Average cost', unitCost(item.avgCostMicro)), tile('Value', rs(item.valuePaisa)),
+      item.category === 'SKU' && item.salePricePaisa ? tile('Sale price', rs(item.salePricePaisa)) : null));
+    view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Movements'), dataTable([
+      { key: 'date', label: 'Date', render: (m) => fmtDate(m.date), csv: (m) => m.date },
+      { key: 'moveType', label: 'What', render: (m) => h('span', {}, MOVE_LABEL[m.moveType] || m.moveType, h('div', { class: 'muted small' }, [m.docId, m.jobId && m.jobId !== m.docId ? m.jobId : ''].filter(Boolean).join(' · '))), csv: (m) => m.moveType },
+      { key: 'qty', label: 'In / out', num: true, render: (m) => (m.qty > 0 ? '+' : '') + m.qty },
+      { key: 'valuePaisa', label: 'Value', money: true, opt: true },
+      { key: 'qtyAfter', label: 'Balance', num: true },
+      { key: 'valueAfterPaisa', label: 'Stock value', money: true },
+    ], led.rows.slice().reverse(), { csv: 'movements-' + id, empty: 'No movements yet.' })));
+  });
+
+  route('/inventory/valuation', async (view, args, params) => {
+    const asOf = params.get('asOf') || today();
+    const v = await api('stock.valuation', { asOf });
+    const date = h('input', { type: 'date', value: asOf });
+    date.addEventListener('change', () => go('#/inventory/valuation?asOf=' + date.value));
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Stock valuation'), h('div', { style: 'flex:0 0 200px' }, date)));
+    view.appendChild(h('div', { class: 'notice ' + (v.reconciled ? 'ok' : 'bad') }, v.reconciled ? 'Stock on hand agrees with the ledger to the paisa.' : 'Stock and the ledger disagree. Tell Finance: this needs investigating before the month is closed.'));
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'name', label: 'Account', render: (r) => r.code + ' ' + r.name }, { key: 'stockPaisa', label: 'Stock on hand', money: true },
+      { key: 'glPaisa', label: 'Ledger', money: true }, { key: 'differencePaisa', label: 'Difference', money: true },
+    ], v.rows, { foot: { name: 'Total', stockPaisa: v.rows.reduce((t, r) => t + r.stockPaisa, 0), glPaisa: v.rows.reduce((t, r) => t + r.glPaisa, 0), differencePaisa: v.rows.reduce((t, r) => t + r.differencePaisa, 0) } })));
+    view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'By item'), dataTable([
+      { key: 'name', label: 'Item', render: (r) => r.name || r.itemId }, { key: 'category', label: 'Kind', opt: true, render: (r) => CATEGORY_LABEL[r.category] || '' },
+      { key: 'qty', label: 'Qty', num: true }, { key: 'avgCostMicro', label: 'Avg cost', num: true, opt: true, render: (r) => unitCost(r.avgCostMicro) }, { key: 'valuePaisa', label: 'Value', money: true },
+    ], v.items.filter((r) => r.qty !== 0 || r.valuePaisa !== 0), { csv: 'valuation-' + asOf })));
+  });
+
+  route('/inventory/count', async (view) => {
+    view.appendChild(h('h1', {}, 'Stock count'));
+    const box = h('div');
+    const cat = h('select', {}, Object.entries(CATEGORY_LABEL).map(([k, l]) => h('option', { value: k, selected: k === (state.me.role === 'STORE' ? 'SKU' : 'FABRIC') }, l)));
+    const date = h('input', { type: 'date', value: today() });
+    const location = h('input', { value: state.me.store || '', placeholder: 'e.g. MIRAE-KHI-01 or Studio' });
+    const grid = h('div');
+    const review = h('div');
+    let items = [];
+    const inputs = {};
+    async function load() {
+      clear(grid); clear(review);
+      items = await api('items.search', { category: cat.value, limit: 500 });
+      if (!items.length) { grid.appendChild(h('div', { class: 'empty' }, 'No items of this kind.')); return; }
+      grid.appendChild(h('p', { class: 'muted small' }, 'Count what is on the shelf and type the number. Quantities on the system stay hidden until you review, so the count is not influenced.'));
+      items.forEach((i) => {
+        inputs[i.id] = h('input', { type: 'number', step: i.unit === 'PC' || i.unit === 'SET' ? '1' : '0.001', min: '0', inputMode: 'decimal', 'aria-label': 'Counted ' + i.name });
+        grid.appendChild(h('div', { class: 'row', style: 'align-items:center;border-bottom:1px solid var(--line);padding:6px 0' }, h('span', {}, h('strong', {}, i.name), h('div', { class: 'muted small' }, i.id + ' · ' + i.unit)), h('div', { style: 'flex:0 0 140px' }, inputs[i.id])));
+      });
+    }
+    cat.addEventListener('change', load);
+    const reviewBtn = h('button', { type: 'button', class: 'primary' }, 'Review differences');
+    view.appendChild(h('div', { class: 'card' }, box, h('div', { class: 'row' }, field('What are you counting', cat), field('Date', date), field('Location', location)), grid, h('div', { class: 'actions', style: 'margin-top:12px' }, reviewBtn)));
+    view.appendChild(review);
+    reviewBtn.addEventListener('click', () => {
+      clear(review);
+      const counted = items.filter((i) => inputs[i.id].value !== '').map((i) => {
+        const diffMilli = Inventory.toMilli(inputs[i.id].value) - Inventory.toMilli(i.qty);
+        return { item: i, countedQty: Number(inputs[i.id].value), diff: Inventory.fromMilli(diffMilli), value: diffMilli < 0 && Inventory.toMilli(inputs[i.id].value) === 0 ? -i.valuePaisa : Inventory.valueAt(diffMilli, i.avgCostMicro) };
+      });
+      if (!counted.length) { review.appendChild(h('div', { class: 'notice' }, 'Enter at least one count.')); return; }
+      const post = h('button', { type: 'button', class: 'primary' }, 'Post count');
+      review.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Differences'), dataTable([
+        { key: 'name', label: 'Item', render: (r) => r.item.name }, { key: 'sys', label: 'System', num: true, render: (r) => r.item.qty },
+        { key: 'countedQty', label: 'Counted', num: true }, { key: 'diff', label: 'Difference', num: true, render: (r) => (r.diff > 0 ? '+' : '') + r.diff },
+        { key: 'value', label: 'Value (approx.)', money: true },
+      ], counted, { rowClass: (r) => (r.diff ? 'overdue' : '') }), h('p', { class: 'muted small' }, 'Shortfalls go to inventory adjustments & shrinkage; surpluses come back in at average cost.'), h('div', { class: 'actions' }, post)));
+      post.addEventListener('click', async () => {
+        try {
+          const r = await submitting(post, box, () => save('stock.count.post', { date: date.value, location: location.value, lines: counted.map((c) => ({ itemId: c.item.id, countedQty: c.countedQty })) }, 'Stock count'));
+          if (r) { toast('Count ' + r.countId + ' posted' + (r.jeId ? '' : ': no differences')); go('#/inventory'); }
+        } catch (e) { box.scrollIntoView(); }
+      });
+    });
+    await load();
+  });
+
+  // ---------- RTW batches ----------
+  route('/batches', async (view) => {
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Mirae production batches'), can('jobs.create') ? h('a', { class: 'btn primary', href: '#/batches/new' }, 'New batch') : null));
+    const jobs = await api('jobs.list', { type: 'RTW_BATCH' });
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'id', label: 'Batch', render: (j) => h('span', {}, j.id, h('div', { class: 'muted small' }, j.title)) }, { key: 'collection', label: 'Collection', opt: true },
+      { key: 'bookedDate', label: 'Started', render: (j) => fmtDate(j.bookedDate), csv: (j) => j.bookedDate },
+      { key: 'costToDatePaisa', label: 'Cost so far', money: true }, { key: 'status', label: 'Status', render: (j) => statusPill(j.status), csv: (j) => j.status },
+    ], jobs.slice().reverse(), { onRow: (j) => go('#/batches/' + j.id), csv: 'batches', empty: 'No batches yet.' })));
+  });
+
+  route('/batches/new', async (view) => {
+    view.appendChild(h('h1', {}, 'New production batch'));
+    const box = h('div');
+    const skus = await api('items.search', { category: 'SKU', limit: 500 });
+    const title = h('input', { placeholder: 'e.g. Winter 26 kurtas, run 1' });
+    const collection = h('input', { placeholder: 'e.g. Winter 26' });
+    const date = h('input', { type: 'date', value: today() });
+    const rows = h('div');
+    function addRow() {
+      const sku = h('select', { 'aria-label': 'SKU' }, h('option', { value: '' }, 'Choose SKU'), skus.map((i) => h('option', { value: i.id }, i.name + ' · ' + i.id)));
+      const qty = h('input', { type: 'number', min: '1', step: '1', placeholder: 'Planned pieces', 'aria-label': 'Planned pieces' });
+      const weight = h('input', { type: 'number', min: '0.1', step: '0.1', value: 1, 'aria-label': 'Cost weight' });
+      rows.appendChild(h('div', { class: 'row' }, field('SKU', sku), field('Planned pieces', qty), field('Cost weight', weight)));
+    }
+    addRow();
+    const submit = h('button', { type: 'button', class: 'primary' }, 'Start batch');
+    view.appendChild(h('div', { class: 'card' }, box, field('Batch name', title), h('div', { class: 'row' }, field('Collection', collection), field('Start date', date)),
+      h('h3', {}, 'What it will make'), h('p', { class: 'muted small' }, 'Cost weight: a piece with weight 2 takes twice the cost of a piece with weight 1 when the batch is completed.'), rows,
+      h('button', { type: 'button', class: 'ghost', onclick: addRow }, '+ Another SKU'), h('div', { class: 'actions' }, submit)));
+    submit.addEventListener('click', async () => {
+      try {
+        const lines = Array.from(rows.children).map((r) => ({ itemId: r.querySelector('select').value, qty: Number(r.querySelectorAll('input')[0].value || 0), weight: Number(r.querySelectorAll('input')[1].value || 1) })).filter((l) => l.itemId);
+        const r = await submitting(submit, box, () => save('jobs.create', { type: 'RTW_BATCH', title: title.value, collection: collection.value, bookedDate: date.value, lines }, 'Batch ' + title.value));
+        if (r) go('#/batches/' + r.job.id);
+      } catch (e) { /* shown */ }
+    });
+  });
+
+  route('/batches/:id', async (view, [id]) => {
+    const d = await api('jobs.get', { id });
+    const j = d.job;
+    const open = j.status === 'OPEN';
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, j.title, ' ', statusPill(j.status)), h('span', { class: 'muted' }, j.id)));
+    const actions = h('div', { class: 'actions', style: 'margin-bottom:16px' });
+    if (open && can('jobs.issueStock')) actions.appendChild(h('button', { type: 'button', onclick: () => issueSheet(d) }, 'Issue materials'));
+    if (open && can('karigar.logWork')) actions.appendChild(h('button', { type: 'button', onclick: () => karigarSheet(d) }, 'Log karigar work'));
+    if (open && can('jobs.returnStock') && d.issues.some((i) => i.returnableQty > 0)) actions.appendChild(h('button', { type: 'button', onclick: () => returnSheet(d) }, 'Return materials'));
+    if (open && can('jobs.completeBatch') && d.costSheet.inWipPaisa > 0) actions.appendChild(h('button', { type: 'button', class: 'primary', onclick: () => completeSheet(d) }, 'Complete batch'));
+    view.appendChild(actions);
+    const cs = d.costSheet;
+    const cost = h('div', { class: 'kv' });
+    Object.keys(cs.byComponent).forEach((c) => cost.append(h('span', {}, COMPONENT_LABEL[c] || c), h('span', { class: 'v' }, rs(cs.byComponent[c]))));
+    cost.append(h('span', { class: 'total' }, j.status === 'COMPLETED' ? 'Moved into finished stock' : 'Cost so far'), h('span', { class: 'v total' }, rs(j.status === 'COMPLETED' ? cs.movedToStockPaisa : cs.inWipPaisa)));
+    view.appendChild(h('div', { class: 'grid2' }, h('div', { class: 'card' }, h('h2', {}, 'Cost'), cost),
+      h('div', { class: 'card' }, h('h2', {}, 'Planned output'), dataTable([{ key: 'description', label: 'SKU' }, { key: 'qty', label: 'Pieces', num: true }, { key: 'weight', label: 'Weight', num: true }], d.lines))));
+  });
+
+  // Same split as the server (R10): C x q x w / Σ(q x w), exact, residual on the last line.
+  function batchSplit(total, outputs) {
+    const weights = outputs.map((o) => Money.parseDecimal(o.weight || 1, 6, 'weight'));
+    const maxPlaces = weights.reduce((m, w) => Math.max(m, w.places), 0);
+    const products = outputs.map((o, i) => BigInt(Inventory.toMilli(o.qty || 0)) * weights[i].units * 10n ** BigInt(maxPlaces - weights[i].places));
+    if (!products.some((p) => p > 0n)) return outputs.map(() => 0);
+    return Money.splitProRata(total, products);
+  }
+
+  function completeSheet(d) {
+    const box = h('div');
+    const total = d.costSheet.inWipPaisa;
+    const date = h('input', { type: 'date', value: today() });
+    const preview = h('div');
+    const rows = d.lines.map((l) => ({ itemId: l.itemId, name: l.description, qty: h('input', { type: 'number', min: '0', step: '1', value: l.qty, 'aria-label': 'Pieces made of ' + l.description }), weight: h('input', { type: 'number', min: '0.1', step: '0.1', value: l.weight || 1, 'aria-label': 'Weight of ' + l.description }) }));
+    function update() {
+      let shares = [];
+      try { shares = batchSplit(total, rows.map((r) => ({ qty: r.qty.value, weight: r.weight.value }))); } catch (e) { shares = rows.map(() => 0); }
+      clear(preview).appendChild(dataTable([{ key: 'name', label: 'SKU' }, { key: 'cost', label: 'Cost', money: true }, { key: 'unit', label: 'Each', num: true }],
+        rows.map((r, i) => ({ name: r.name, cost: shares[i], unit: Number(r.qty.value) > 0 ? rs(Money.divRoundHalfEven(shares[i], Math.round(Number(r.qty.value)))) : '' }))));
+    }
+    rows.forEach((r) => { r.qty.addEventListener('input', update); r.weight.addEventListener('input', update); });
+    update();
+    sheet('Complete ' + d.job.id, h('div', {}, box, h('p', {}, 'Batch cost ', h('strong', {}, rs(total)), ' is shared across the pieces made.'), field('Date', date),
+      rows.map((r) => h('div', { class: 'row' }, h('span', { style: 'align-self:center' }, r.name), field('Pieces made', r.qty), field('Weight', r.weight))), h('h3', {}, 'Cost per SKU'), preview), (close) => [
+      h('button', { type: 'button', onclick: close }, 'Cancel'),
+      h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+        try {
+          const outputs = rows.map((r) => ({ itemId: r.itemId, qty: Number(r.qty.value || 0), weight: Number(r.weight.value || 1) })).filter((o) => o.qty > 0);
+          const r = await submitting(e.currentTarget, box, () => save('jobs.completeBatch', { jobId: d.job.id, date: date.value, outputs }, 'Complete ' + d.job.id));
+          close();
+          if (r) { toast('Batch completed: ' + rs(r.totalCostPaisa) + ' moved into finished stock'); render(); }
+        } catch (err) { /* shown */ }
+      } }, 'Complete batch'),
+    ]);
+  }
+
+  function returnSheet(d) {
+    const box = h('div');
+    const date = h('input', { type: 'date', value: today() });
+    const rows = d.issues.filter((i) => i.returnableQty > 0).map((i) => ({ issue: i, qty: h('input', { type: 'number', min: '0', step: '0.001', max: String(i.returnableQty), placeholder: 'up to ' + i.returnableQty, 'aria-label': 'Return ' + i.itemName }) }));
+    sheet('Return materials from ' + d.job.id, h('div', {}, box, h('p', { class: 'muted small' }, 'Returned stock goes back at the cost it was issued at.'), field('Date', date),
+      rows.map((r) => h('div', { class: 'row' }, h('span', { style: 'align-self:center' }, r.issue.itemName, h('div', { class: 'muted small' }, 'issued ' + fmtDate(r.issue.date) + ': ' + r.issue.qty + ' ' + r.issue.unit + ' for ' + rs(r.issue.valuePaisa))), field('Return', r.qty)))), (close) => [
+      h('button', { type: 'button', onclick: close }, 'Cancel'),
+      h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+        try {
+          for (const r of rows.filter((x) => Number(x.qty.value) > 0)) {
+            await submitting(e.currentTarget, box, () => save('jobs.returnStock', { jobId: d.job.id, date: date.value, issueMoveId: r.issue.moveId, qty: r.qty.value }, 'Return to stock'));
+          }
+          close(); toast('Returned to stock'); render();
+        } catch (err) { /* shown */ }
+      } }, 'Return'),
+    ]);
+  }
+
   // ---------- modules not built yet ----------
-  const SOON = { store: ['Store', 'M6'], sale: ['New sale', 'M6'], returns: ['Returns', 'M6'], today: ['Today', 'M6'], cashup: ['Cash-up', 'M6'], inventory: ['Inventory', 'M5'], banking: ['Banking', 'M8'], reports: ['Reports', 'M7'] };
+  const SOON = { store: ['Store', 'M6'], sale: ['New sale', 'M6'], returns: ['Returns', 'M6'], today: ['Today', 'M6'], cashup: ['Cash-up', 'M6'], banking: ['Banking', 'M8'], reports: ['Reports', 'M7'] };
   route('/soon/:what', async (view, [what]) => {
     const s = SOON[what] || [what, 'a later milestone'];
     view.appendChild(h('h1', {}, s[0]));

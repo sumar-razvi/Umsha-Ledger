@@ -102,6 +102,25 @@ function rebuildItemBalances(stockMoves) {
   return out;
 }
 
+// One item's movements in posting order, each with the running quantity,
+// value and average after it (the item movement ledger, docs/06 Inventory).
+// opts: {from, to} only filter what is returned; balances run from the first move.
+function movementLedger(stockMoves, itemId, opts) {
+  const o = opts || {};
+  const st = emptyState();
+  const rows = [];
+  let opening = null;
+  stockMoves.forEach(function (m) {
+    if (m.itemId !== itemId) return;
+    if (o.from && m.date < o.from) { applyMove(st, m); return; }
+    if (opening === null) opening = balanceFromState(itemId, st);
+    applyMove(st, m);
+    if (o.to && m.date > o.to) return;
+    rows.push(Object.assign({}, m, { qtyAfter: fromMilli(st.qtyMilli), valueAfterPaisa: st.valuePaisa, avgCostMicroAfter: st.avgCostMicro }));
+  });
+  return { itemId: itemId, opening: opening || balanceFromState(itemId, st), rows: rows, closing: balanceFromState(itemId, st) };
+}
+
 // A working copy of item balances for one entry. Each operation returns the
 // stock move it made; updates() returns the new balances of touched items.
 function createStockLedger(itemBalances, opts) {
@@ -197,5 +216,6 @@ if (typeof module !== 'undefined') module.exports = {
   itemBrand,
   applyMove,
   rebuildItemBalances,
+  movementLedger,
   createStockLedger,
 };
