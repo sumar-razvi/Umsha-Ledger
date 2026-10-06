@@ -410,9 +410,64 @@ async function noHorizontalScroll(page) {
     await op.waitForSelector('text=Cash and bank');
     await shot(op, 'cash-position');
 
+    // ---- M8: Finance imports a bank statement, reconciles it, exports for QuickBooks ----
+    const today = gas.context.Dates.karachiDate();
+    const jeDate = Object.fromEntries(gas.rows('Journal').map((j) => [j.id, j.date]));
+    const bankLines = gas.rows('JournalLines').filter((l) => l.accountCode === '1100' && jeDate[l.jeId] <= today);
+    const ledgerBal = bankLines.reduce((s, l) => s + l.debitPaisa - l.creditPaisa, 0);
+    const dmy = (d) => d.slice(8, 10) + '/' + d.slice(5, 7) + '/' + d.slice(0, 4);
+    const csvText = 'Statement of account\nDate,Narration,Amount\n' + bankLines.map((l, i) => dmy(jeDate[l.jeId]) + ',Line ' + (i + 1) + ',' + ((l.debitPaisa - l.creditPaisa) / 100).toFixed(2)).join('\n') +
+      '\n' + dmy(today) + ',"Service charges, Sept",-500.00\n';
+    const fb = (await signInAs(browser, base, 'Sara', { width: 1280, height: 900 })).page;
+    await fb.goto(base + '#/banking');
+    await fb.waitForSelector('h1:has-text("Banking")');
+    await fb.getByRole('link', { name: 'Import statement' }).click();
+    await fb.waitForSelector('h1:has-text("Import a bank statement")');
+    await fb.locator('select[aria-label=Account]').selectOption('1100');
+    await fb.locator('input[aria-label="Statement file"]').setInputFiles({ name: 'statement.csv', mimeType: 'text/csv', buffer: Buffer.from(csvText) });
+    await fb.waitForSelector('text=' + (bankLines.length + 1) + ' lines');
+    await fb.locator('.field', { hasText: 'Statement end date' }).locator('input').fill(today);
+    await fb.locator('input[aria-label="Closing balance on the statement"]').fill(((ledgerBal - 50000) / 100).toFixed(2));
+    await shot(fb, 'bank-import');
+    await fb.getByRole('button', { name: 'Import' }).click();
+    await fb.waitForSelector('text=Statement balance');
+    assert.ok(await fb.getByRole('button', { name: 'Finish reconciliation' }).isDisabled(), 'the bank charge is not in the ledger yet');
+    await fb.getByRole('button', { name: 'Record bank charge' }).click();
+    const bc = fb.getByRole('dialog', { name: /Bank charge/ });
+    await bc.getByRole('button', { name: 'Record' }).click();
+    await bc.waitFor({ state: 'detached' });
+    await fb.waitForSelector('button:has-text("Finish reconciliation"):not([disabled])');
+    await shot(fb, 'bank-rec');
+    await fb.getByRole('button', { name: 'Finish reconciliation' }).click();
+    await fb.waitForSelector('.pagehead .status:has-text("Reconciled")');
+    const rec = gas.rows('BankRecs').at(-1);
+    assert.equal(rec.status, 'RECONCILED');
+    assert.equal(gas.rows('JournalLines').filter((l) => l.accountCode === '1100' && l.reconciled).length, bankLines.length + 1);
+
+    await fb.goto(base + '#/accounts');
+    await fb.locator('table.data tr', { hasText: '6600' }).first().click();
+    const as = fb.getByRole('dialog', { name: /6600/ });
+    await as.locator('.field', { hasText: 'QuickBooks account name' }).locator('input').fill('Bank Service Charges');
+    await as.getByRole('button', { name: 'Save' }).click();
+    await as.waitFor({ state: 'detached' });
+    assert.equal(gas.rows('Accounts').find((a) => a.code === '6600').qbAccountName, 'Bank Service Charges');
+    await fb.goto(base + '#/reports/quickbooks');
+    await fb.waitForSelector('h1:has-text("QuickBooks export")');
+    const dl = fb.getByRole('button', { name: /Download .*\.csv/ });
+    if (await dl.count()) {
+      const [download] = await Promise.all([fb.waitForEvent('download'), dl.click()]);
+      const body = fs.readFileSync(await download.path(), 'utf8');
+      assert.match(body.split('\n')[0], /^Journal No\.,Journal Date,Account,Debits,Credits/);
+      assert.match(body, /Bank Service Charges/);
+    } else {
+      await fb.waitForSelector('text=have no QuickBooks name yet');
+    }
+    await shot(fb, 'quickbooks');
+
     console.log('ok - UI: book, advance, karigar, deliver, balance, receipts and journals (' + (SHOTS ? 'screenshots in ' + SHOTS : 'no screenshots') + ')');
   } catch (e) {
     console.error('not ok - UI test failed:', e.message);
+    for (const c of browser.contexts()) for (const p of c.pages()) { const t = await p.locator('.notice, .sheet').allInnerTexts().catch(() => []); if (t.length) console.error('page', p.url(), t.join(' | ').slice(0, 600)); }
     process.exitCode = 1;
   } finally {
     await browser.close();

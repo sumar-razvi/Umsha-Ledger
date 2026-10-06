@@ -471,6 +471,11 @@ const CONFIG = {
     }
     return wrap;
   }
+  function downloadText(filename, text) {
+    const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+    const a = h('a', { href: URL.createObjectURL(blob), download: filename });
+    document.body.appendChild(a); a.click(); a.remove();
+  }
   function downloadCsv(name, columns, rows) {
     const header = columns.map((c) => c.label);
     const data = rows.map((r) => columns.map((c) => (c.csv ? c.csv(r) : c.money ? Money.toRupeeString(r[c.key] || 0) : r[c.key] === undefined ? '' : r[c.key])));
@@ -487,7 +492,8 @@ const CONFIG = {
         h('div', { class: 'actions', style: 'margin-top:12px' }, buttons(close))));
     document.body.appendChild(overlay);
     const first = overlay.querySelector('input, select, textarea');
-    if (first) setTimeout(() => first.focus(), 30);
+    // Only if the user has not already tapped into the sheet (fast taps would lose typing).
+    if (first) setTimeout(() => { if (!overlay.contains(document.activeElement)) first.focus(); }, 30);
     return close;
   }
 
@@ -531,8 +537,11 @@ const CONFIG = {
     const path = (location.hash || '#/').slice(1).split('?')[0] || '/';
     const params = new URLSearchParams((location.hash.split('?')[1]) || '');
     renderShell(path);
-    const view = document.getElementById('view');
-    clear(view);
+    // A fresh element per render: an older render still awaiting data writes
+    // into its own detached view instead of adding to this page.
+    const old = document.getElementById('view');
+    const view = old.cloneNode(false);
+    old.replaceWith(view);
     const r = routes.find((x) => x.re.test(path));
     if (!r) { view.appendChild(h('div', { class: 'empty' }, 'Page not found.')); return; }
     const args = path.match(r.re).slice(1).map(decodeURIComponent);
@@ -548,8 +557,8 @@ const CONFIG = {
 
   // ---------- shell ----------
   const NAV = {
-    OWNER: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/soon/banking'], ['Reports', '/reports'], ['Settings', '/settings']],
-    FINANCE: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/soon/banking'], ['Reports', '/reports'], ['Journals', '/journals']],
+    OWNER: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/banking'], ['Reports', '/reports'], ['Settings', '/settings']],
+    FINANCE: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/banking'], ['Reports', '/reports'], ['Journals', '/journals']],
     STUDIO: [['Orders', '/orders'], ['Customers', '/customers'], ['Inventory', '/inventory'], ['Batches', '/batches'], ['Karigars', '/karigars']],
     STORE: [['New sale', '/sale'], ['Returns', '/returns'], ['Today', '/today'], ['Cash-up', '/cashup'], ['Petty expense', '/purchases/expense']],
     VIEWER: [['Reports', '/reports'], ['Journals', '/journals']],
@@ -1184,9 +1193,14 @@ const CONFIG = {
         if (!confirm('Close the fiscal year ending ' + fyEnd.value + '?')) return;
         try { const r = await save('year.close', { fiscalYearEnd: fyEnd.value }, 'Year-end close'); toast('Year closed: net profit ' + rs(r.netProfitPaisa) + ' to retained earnings'); } catch (e) { toast(e.message, 'bad'); }
       } }, 'Close the year')))));
+    const tabSel = h('select', {}, Object.keys(Schema.TABS).filter((t) => t !== 'Requests').map((t) => h('option', { value: t }, t)));
     view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'System'), h('div', { class: 'actions' },
       h('button', { type: 'button', onclick: async () => { try { const r = await save('setup.run', {}, 'Run setup'); toast(Setup_summary(r)); } catch (e) { toast(e.message, 'bad'); } } }, 'Run setup (adds anything missing)'),
-      h('button', { type: 'button', onclick: async () => { try { const r = await save('backup.now', {}, 'Backup'); toast('Backup saved: ' + r.name); } catch (e) { toast(e.message, 'bad'); } } }, 'Back up now'))));
+      h('button', { type: 'button', onclick: async () => { try { const r = await save('backup.now', {}, 'Backup'); toast('Backup saved: ' + r.name); } catch (e) { toast(e.message, 'bad'); } } }, 'Back up now'),
+      h('a', { class: 'btn', href: '#/accounts' }, 'Chart of accounts')),
+      h('div', { class: 'row', style: 'margin-top:12px' }, field('Download a whole tab as CSV', tabSel), h('div', { style: 'flex:0 0 auto;margin-bottom:12px' }, h('button', { type: 'button', onclick: async () => {
+        try { const t = await api('export.table', { tab: tabSel.value }); downloadText(t.filename, t.csv); } catch (e) { toast(e.message, 'bad'); }
+      } }, 'Download')))));
   });
   function taxSheet(t) {
     const box = h('div');
@@ -2292,6 +2306,8 @@ const CONFIG = {
     ['/reports/sales-tax', 'Sales tax', 'Output, input and payable for a period', 'reports.salesTax'],
     ['/reports/wht', 'Withholding tax register', 'Tax deducted from vendors, for filing', 'reports.whtRegister'],
     ['/reports/audit', 'Audit log', 'Who did what, when', 'reports.auditLog'],
+    ['/reports/quickbooks', 'QuickBooks export', 'Journals for the accountant, ready to import', 'export.quickbooksJournals'],
+    ['/accounts', 'Chart of accounts', 'Accounts, balances and QuickBooks names', 'accounts.list'],
   ];
   route('/reports', async (view) => {
     view.appendChild(h('h1', {}, 'Reports'));
@@ -2573,8 +2589,221 @@ const CONFIG = {
     ]);
   }
 
+
+  // ---------- banking and export (M8) ----------
+  route('/banking', async (view) => {
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Banking'), h('div', { class: 'actions' },
+      h('a', { class: 'btn primary', href: '#/banking/import' }, 'Import statement'), h('button', { type: 'button', onclick: transferSheet }, 'Transfer'),
+      h('a', { class: 'btn', href: '#/store' }, 'Card settlement'), h('a', { class: 'btn ghost', href: '#/accounts' }, 'Chart of accounts'))));
+    const [cash, recs] = await Promise.all([api('reports.cashPosition', { asOf: today() }), api('bankrec.list', {})]);
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'name', label: 'Account', render: (a) => h('a', { href: '#/ledger/' + a.code }, a.name) }, { key: 'moneyKind', label: 'Kind', opt: true, render: (a) => a.moneyKind.charAt(0) + a.moneyKind.slice(1).toLowerCase() },
+      { key: 'balancePaisa', label: 'Balance', money: true },
+      { key: 'rec', label: 'Last reconciled', opt: true, render: (a) => { const r = recs.find((x) => x.accountCode === a.code && x.status === 'RECONCILED'); return r ? fmtDate(r.statementDate) : '—'; } },
+    ], cash.accounts, { foot: { name: 'Total', balancePaisa: cash.cashPaisa } })));
+    view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Reconciliations'), dataTable([
+      { key: 'id', label: 'Statement' }, { key: 'accountCode', label: 'Account', render: (r) => (state.accountsByCode[r.accountCode] || {}).name || r.accountCode },
+      { key: 'statementDate', label: 'To', render: (r) => fmtDate(r.statementDate) }, { key: 'statementBalancePaisa', label: 'Statement balance', money: true },
+      { key: 'status', label: 'Status', render: (r) => h('span', { class: 'status ' + (r.status === 'RECONCILED' ? 'POSTED' : 'READY') }, r.status === 'RECONCILED' ? 'Reconciled' : 'In progress') },
+    ], recs, { onRow: (r) => go('#/banking/rec/' + r.id), empty: 'No statements imported yet.' })));
+  });
+
+  function transferSheet() {
+    const box = h('div');
+    const from = moneyAccountSelect('1100'); const to = moneyAccountSelect('1030');
+    const amt = moneyInput({ label: 'Amount' }); const date = h('input', { type: 'date', value: today() }); const memo = h('input', { placeholder: 'e.g. Petty cash top-up' });
+    sheet('Transfer between accounts', h('div', {}, box, h('div', { class: 'row' }, field('From', from), field('To', to)), field('Amount', amt), h('div', { class: 'row' }, field('Date', date), field('Note', memo))), (close) => [
+      h('button', { type: 'button', onclick: close }, 'Cancel'),
+      h('button', { type: 'button', class: 'primary', onclick: async (e) => { try { const r = await submitting(e.currentTarget, box, () => save('transfers.create', { date: date.value, fromCode: from.value, toCode: to.value, amountPaisa: amt.value(), memo: memo.value }, 'Transfer')); close(); if (r) { toast('Transferred'); render(); } } catch (err) { /* shown */ } } }, 'Transfer'),
+    ]);
+  }
+
+  route('/banking/import', async (view) => {
+    view.appendChild(h('h1', {}, 'Import a bank statement'));
+    const box = h('div');
+    const accounts = state.accounts.filter((a) => a.isMoney && ['BANK', 'WALLET', 'CLEARING'].includes(a.moneyKind) && a.systemKey !== 'STORE_CREDIT');
+    const acct = h('select', { 'aria-label': 'Account' }, accounts.map((a) => h('option', { value: a.code }, a.name)));
+    const file = h('input', { type: 'file', accept: '.csv,text/csv', 'aria-label': 'Statement file' });
+    const mapBox = h('div');
+    const preview = h('div');
+    const endDate = h('input', { type: 'date', value: monthBounds(-1).to });
+    const closing = moneyInput({ label: 'Closing balance on the statement' });
+    let text = '';
+    let sel = {};
+    function headerOf(t) { const rows = Csv.parseRows(t); return (rows.find((r) => r.filter((c) => c.trim()).length >= 2) || []).map((c) => c.trim()).filter(Boolean); }
+    function mapping() {
+      const m = { dateColumn: sel.date.value, dateFormat: sel.format.value, descriptionColumn: sel.desc.value };
+      if (sel.mode.value === 'ONE') { m.amountColumn = sel.amount.value; if (sel.sign.value === 'DEBIT_POSITIVE') m.amountSign = 'DEBIT_POSITIVE'; } else { m.debitColumn = sel.debit.value; m.creditColumn = sel.credit.value; }
+      return m;
+    }
+    function drawMapping() {
+      clear(mapBox); clear(preview);
+      if (!text) return;
+      const cols = headerOf(text);
+      let saved = {};
+      try { saved = JSON.parse(state.settings['bankMapping:' + acct.value] || '{}'); } catch (e) { saved = {}; }
+      const pick = (label, value) => h('select', { 'aria-label': label }, h('option', { value: '' }, '—'), cols.map((c) => h('option', { value: c, selected: c === value }, c)));
+      const guess = (re) => cols.find((c) => re.test(c)) || '';
+      sel = {
+        date: pick('Date column', saved.dateColumn || guess(/date/i)), desc: pick('Description column', saved.descriptionColumn || guess(/narr|desc|detail|particular/i)),
+        format: h('select', { 'aria-label': 'Date format' }, Bankrec.DATE_FORMATS.map((f) => h('option', { value: f, selected: f === (saved.dateFormat || 'DD/MM/YYYY') }, f))),
+        mode: h('select', { 'aria-label': 'Amounts' }, h('option', { value: 'ONE' }, 'One amount column (+ in, − out)'), h('option', { value: 'TWO', selected: !!saved.debitColumn || (!!guess(/withdraw|debit/i) && !guess(/^amount$/i)) }, 'Separate money out / money in columns')),
+        amount: pick('Amount column', saved.amountColumn || guess(/amount/i)), sign: h('select', { 'aria-label': 'Sign' }, h('option', { value: '' }, 'Money in is positive'), h('option', { value: 'DEBIT_POSITIVE', selected: saved.amountSign === 'DEBIT_POSITIVE' }, 'Money out is positive')),
+        debit: pick('Money out column', saved.debitColumn || guess(/withdraw|debit/i)), credit: pick('Money in column', saved.creditColumn || guess(/deposit|credit/i)),
+      };
+      const one = h('div', { class: 'row' }, field('Amount column', sel.amount), field('Sign', sel.sign));
+      const two = h('div', { class: 'row' }, field('Money out column', sel.debit), field('Money in column', sel.credit));
+      const toggle = () => { one.classList.toggle('hidden', sel.mode.value !== 'ONE'); two.classList.toggle('hidden', sel.mode.value === 'ONE'); showPreview(); };
+      Object.values(sel).forEach((x) => x.addEventListener('change', toggle));
+      mapBox.append(h('div', { class: 'row' }, field('Date column', sel.date), field('Date format', sel.format), field('Description column', sel.desc)), field('Amounts', sel.mode), one, two);
+      toggle();
+    }
+    function showPreview() {
+      clear(preview);
+      try {
+        const lines = Bankrec.parseStatement(text, mapping());
+        preview.appendChild(h('p', { class: 'muted small' }, lines.length + ' lines, ' + fmtDate(lines[0].date) + ' to ' + fmtDate(lines[lines.length - 1].date) + '. First few:'));
+        preview.appendChild(dataTable([{ key: 'date', label: 'Date', render: (l) => fmtDate(l.date) }, { key: 'description', label: 'Description' }, { key: 'amountPaisa', label: 'Amount', money: true }], lines.slice(0, 5)));
+      } catch (e) { preview.appendChild(h('div', { class: 'notice' }, e.message)); }
+    }
+    file.addEventListener('change', () => { const f = file.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { text = String(r.result); drawMapping(); }; r.readAsText(f); });
+    acct.addEventListener('change', drawMapping);
+    const submit = h('button', { type: 'button', class: 'primary' }, 'Import');
+    view.appendChild(h('div', { class: 'card' }, box, h('div', { class: 'row' }, field('Account', acct), field('Statement file (CSV)', file)), mapBox, preview,
+      h('div', { class: 'row' }, field('Statement end date', endDate), field('Closing balance on the statement', closing)), h('div', { class: 'actions' }, submit)));
+    submit.addEventListener('click', async () => {
+      try {
+        const r = await submitting(submit, box, () => save('bankrec.import', { accountCode: acct.value, csvText: text, mapping: text ? mapping() : null, statementDate: endDate.value, statementBalancePaisa: closing.value() }, 'Statement import'));
+        if (r) { state.settings['bankMapping:' + acct.value] = JSON.stringify(mapping()); go('#/banking/rec/' + r.recId); }
+      } catch (e) { /* shown */ }
+    });
+  });
+
+  route('/banking/rec/:id', async (view, [id]) => {
+    const d = await api('bankrec.get', { recId: id });
+    const rec = d.rec;
+    const open = rec.status === 'OPEN';
+    const pairs = d.suggestions.slice();
+    let picked = null;
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, (d.account || {}).name + ' to ' + fmtDate(rec.statementDate)), h('span', { class: 'status ' + (open ? 'READY' : 'POSTED') }, open ? 'In progress' : 'Reconciled')));
+    const summaryEl = h('div', { class: 'kv' });
+    const left = h('div'); const right = h('div');
+    const finish = h('button', { type: 'button', class: 'primary' }, 'Finish reconciliation');
+    const saveBtn = h('button', { type: 'button' }, 'Save matches');
+    const box = h('div');
+    const pairOfStmt = (sid) => pairs.find((p) => p.statementLineId === sid);
+    const pairOfLedger = (lid) => pairs.find((p) => p.jeLineId === lid);
+    const amt = (l) => l.debitPaisa - l.creditPaisa;
+    function draw() {
+      const sm = Bankrec.reconciliationSummary(rec, d.statementLines, d.ledgerLines, pairs);
+      clear(summaryEl).append(h('span', {}, 'Statement balance'), h('span', { class: 'v' }, rs(sm.statementBalancePaisa)),
+        h('span', {}, 'Ledger balance on ' + fmtDate(rec.statementDate)), h('span', { class: 'v' }, rs(sm.ledgerBalancePaisa)),
+        h('span', { class: 'muted' }, 'Less: in the ledger, not yet through the bank'), h('span', { class: 'v muted' }, rs(-sm.unclearedPaisa)),
+        h('span', { class: 'muted' }, 'Plus: on the statement, not yet in the ledger'), h('span', { class: 'v muted' }, rs(sm.notInLedgerPaisa)),
+        h('span', { class: 'total' }, 'Difference'), h('span', { class: 'v total' + (sm.differencePaisa ? ' bad-text' : '') }, rs(sm.differencePaisa)));
+      finish.disabled = !open || !sm.balanced;
+      clear(left).appendChild(h('h3', {}, 'Statement'));
+      d.statementLines.forEach((s) => {
+        const p = s.matchedJeLineId ? { jeLineId: s.matchedJeLineId } : pairOfStmt(s.id);
+        const row = h('div', { class: 'cartline', style: 'cursor:pointer;' + (picked === s.id ? 'background:var(--accent-soft)' : p ? 'opacity:.6' : '') },
+          h('span', {}, fmtDate(s.date), h('div', { class: 'muted small' }, s.description), p ? h('div', { class: 'small', style: 'color:var(--ok)' }, '✓ ' + p.jeLineId) : null,
+            !p && open && s.amountPaisa < 0 ? h('button', { type: 'button', class: 'ghost', style: 'min-height:30px;padding:2px 6px', onclick: (e) => { e.stopPropagation(); chargeSheet(s); } }, 'Record bank charge') : null),
+          h('span', { class: 'num' }, rs(s.amountPaisa)));
+        row.addEventListener('click', () => {
+          if (!open || s.matchedJeLineId) return;
+          const existing = pairOfStmt(s.id);
+          if (existing) { pairs.splice(pairs.indexOf(existing), 1); picked = null; } else picked = picked === s.id ? null : s.id;
+          draw();
+        });
+        left.appendChild(row);
+      });
+      clear(right).appendChild(h('h3', {}, 'Ledger'));
+      d.ledgerLines.filter((l) => !l.reconciled || l.reconciledDate === rec.statementDate).forEach((l) => {
+        const p = l.reconciled ? true : pairOfLedger(l.id);
+        const row = h('div', { class: 'cartline', style: 'cursor:pointer;' + (p ? 'opacity:.6' : '') },
+          h('span', {}, fmtDate(l.date), h('div', { class: 'muted small' }, (DOC_LABEL[l.docType] || l.docType) + ' ' + l.docId + (l.jeMemo ? ' · ' + l.jeMemo : '')), h('div', { class: 'small muted' }, l.id)),
+          h('span', { class: 'num' }, rs(amt(l))));
+        row.addEventListener('click', () => {
+          if (!open || l.reconciled) return;
+          const existing = pairOfLedger(l.id);
+          if (existing) { pairs.splice(pairs.indexOf(existing), 1); draw(); return; }
+          if (!picked) { toast('Tap a statement line first'); return; }
+          const s = d.statementLines.find((x) => x.id === picked);
+          if (s.amountPaisa !== amt(l)) { toast('Amounts differ: ' + rs(s.amountPaisa) + ' vs ' + rs(amt(l)), 'bad'); return; }
+          pairs.push({ statementLineId: picked, jeLineId: l.id }); picked = null; draw();
+        });
+        right.appendChild(row);
+      });
+    }
+    function chargeSheet(s) {
+      const b = h('div');
+      sheet('Bank charge ' + rs(-s.amountPaisa), h('div', {}, b, h('p', { class: 'muted' }, s.description + ' · ' + fmtDate(s.date)), h('p', { class: 'small muted' }, 'Records it as a bank charge (6600) paid from this account, then you can match it.')), (close) => [
+        h('button', { type: 'button', onclick: close }, 'Cancel'),
+        h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+          try { const r = await submitting(e.currentTarget, b, () => save('expenses.create', { date: s.date, moneyAccountCode: rec.accountCode, lines: [{ accountCode: '6600', brand: 'SHARED', netPaisa: -s.amountPaisa, description: s.description || 'Bank charges' }] }, 'Bank charge')); close(); if (r) render(); } catch (err) { /* shown */ }
+        } }, 'Record'),
+      ]);
+    }
+    async function send(fin) {
+      const fresh = pairs.filter((p) => !d.statementLines.find((s) => s.id === p.statementLineId).matchedJeLineId);
+      try { const r = await submitting(fin ? finish : saveBtn, box, () => save('bankrec.match', { recId: rec.id, matches: fresh, finish: fin }, fin ? 'Reconcile' : 'Save matches')); if (r) { toast(fin ? 'Reconciled' : 'Matches saved'); render(); } } catch (e) { /* shown */ }
+    }
+    saveBtn.addEventListener('click', () => send(false));
+    finish.addEventListener('click', () => send(true));
+    view.appendChild(h('div', { class: 'card' }, box, summaryEl, open ? h('div', { class: 'actions', style: 'margin-top:12px' }, saveBtn, finish) : null,
+      open ? h('p', { class: 'muted small' }, 'Suggested matches (same amount, within 5 days) are already paired. Tap a statement line, then the ledger line it matches. Tap a pair again to undo.') : null));
+    view.appendChild(h('div', { class: 'grid2' }, h('div', { class: 'card' }, left), h('div', { class: 'card' }, right)));
+    draw();
+  });
+
+  route('/reports/quickbooks', async (view, args, params) => {
+    const rb = rangeBar(params, '/reports/quickbooks');
+    view.appendChild(h('h1', {}, 'QuickBooks export'));
+    view.appendChild(rb.bar);
+    const r = await api('export.quickbooksJournals', { from: rb.from, to: rb.to });
+    if (r.unmappedAccounts.length) {
+      view.appendChild(h('div', { class: 'notice bad' }, 'These accounts have no QuickBooks name yet, so nothing was exported: ', r.unmappedAccounts.map((a) => a.code + ' ' + a.name).join(', '), '. ',
+        can('accounts.upsert') ? h('a', { href: '#/accounts' }, 'Add their QuickBooks names') : 'Ask Finance to add them.'));
+      return;
+    }
+    view.appendChild(h('div', { class: 'tiles' }, tile('Journal entries', r.journalCount), tile('Lines', r.rowCount), tile('Debits = credits', rs(r.debitsPaisa))));
+    view.appendChild(h('div', { class: 'card' }, h('p', {}, 'One row per journal line, with brands as QuickBooks classes (UMSHA, Mirae, Shared). Dates are ' + (state.settings.qbDateFormat || 'DD/MM/YYYY') + '.'),
+      h('button', { type: 'button', class: 'primary', disabled: !r.rowCount, onclick: () => downloadText(r.filename, r.csv) }, 'Download ' + r.filename)));
+  });
+
+  route('/accounts', async (view) => {
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Chart of accounts'), can('accounts.upsert') ? h('button', { type: 'button', class: 'primary', onclick: () => accountSheet() }, 'Add account') : null));
+    const list = await api('accounts.list', {});
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'code', label: 'Code' }, { key: 'name', label: 'Name', render: (a) => h('span', {}, a.name, a.isActive ? '' : h('span', { class: 'status VOID', style: 'margin-left:6px' }, 'Off')) },
+      { key: 'type', label: 'Type', opt: true }, { key: 'qbAccountName', label: 'QuickBooks name', opt: true, render: (a) => a.qbAccountName || h('span', { class: 'bad-text' }, 'missing') },
+      { key: 'balancePaisa', label: 'Balance (Dr +)', money: true },
+    ], list, { onRow: can('accounts.upsert') ? (a) => accountSheet(a) : (a) => go('#/ledger/' + a.code), csv: 'chart-of-accounts' })));
+  });
+  function accountSheet(a) {
+    const box = h('div');
+    const code = h('input', { value: a ? a.code : '', disabled: !!a, inputMode: 'numeric', placeholder: 'e.g. 6150' });
+    const name = h('input', { value: a ? a.name : '' });
+    const type = h('select', { disabled: !!(a && a.systemKey) }, ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'COGS', 'EXPENSE', 'OTHER', 'TAX'].map((t) => h('option', { value: t, selected: a ? a.type === t : t === 'EXPENSE' }, t.charAt(0) + t.slice(1).toLowerCase())));
+    const brand = brandSelect(a ? a.defaultBrand : 'SHARED');
+    const qb = h('input', { value: a ? a.qbAccountName : '', placeholder: 'Exactly as in QuickBooks' });
+    sheet(a ? a.code + ' ' + a.name : 'New account', h('div', {}, box, h('div', { class: 'row' }, field('Code', code), field('Type', type)), field('Name', name), field('Usual brand', brand), field('QuickBooks account name', qb),
+      a && a.systemKey ? h('p', { class: 'muted small' }, 'Used by the system (' + a.systemKey + '): it cannot be switched off.') : null), (close) => [
+      a && a.isActive && !a.systemKey ? h('button', { type: 'button', class: 'danger', onclick: async () => { try { await save('accounts.deactivate', { code: a.code }, 'Deactivate ' + a.code); close(); render(); } catch (e) { toast(e.message, 'bad'); } } }, 'Switch off') : null,
+      h('button', { type: 'button', onclick: close }, 'Cancel'),
+      h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+        try {
+          const payload = { code: code.value, name: name.value, type: type.value, defaultBrand: brand.value, qbAccountName: qb.value };
+          if (a) Object.assign(payload, { id: a.id, isMoney: a.isMoney, moneyKind: a.moneyKind, isContra: a.isContra, subType: a.subType });
+          const r = await submitting(e.currentTarget, box, () => save('accounts.upsert', payload, 'Account ' + code.value));
+          close(); if (r) { const me = await api('session.me', {}); state.accounts = me.accounts; state.accountsByCode = {}; me.accounts.forEach((x) => { state.accountsByCode[x.code] = x; }); render(); }
+        } catch (err) { /* shown */ }
+      } }, 'Save'),
+    ]);
+  }
+
   // ---------- modules not built yet ----------
-  const SOON = { banking: ['Banking', 'M8'] };
+  const SOON = { };
   route('/soon/:what', async (view, [what]) => {
     const s = SOON[what] || [what, 'a later milestone'];
     view.appendChild(h('h1', {}, s[0]));

@@ -36,7 +36,7 @@ const TABS = {
   StockCounts: { columns: ['id', 'date', 'location', 'status', 'jeId', 'createdBy', 'createdAt'] },
   StockCountLines: { columns: ['id', 'countId', 'itemId', 'systemQty', 'countedQty', 'diffQty', 'valuePaisa'] },
   CashUps: { columns: ['id', 'date', 'store', 'expectedCashPaisa', 'countedCashPaisa', 'diffPaisa', 'expectedCardPaisa', 'notes', 'jeId', 'createdBy', 'createdAt'] },
-  BankRecs: { columns: ['id', 'accountCode', 'statementDate', 'statementBalancePaisa', 'status'] },
+  BankRecs: { columns: ['id', 'accountCode', 'statementDate', 'statementBalancePaisa', 'status', 'createdBy', 'createdAt', 'reconciledBy', 'reconciledAt'] },
   BankStatementLines: { columns: ['id', 'recId', 'date', 'description', 'amountPaisa', 'matchedJeLineId'] },
 
   // Ledger: append-only (invariant 3). Only the listed columns may ever be

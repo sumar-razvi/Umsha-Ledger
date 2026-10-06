@@ -91,6 +91,7 @@ var SEED = {
     {"key":"storeCashAccount","value":"1020"},
     {"key":"walletAccount","value":"1120"},
     {"key":"backupFolderId","value":""},
+    {"key":"qbDateFormat","value":"DD/MM/YYYY"},
     {"key":"attachmentsFolderId","value":""},
     {"key":"whatsappReceiptTemplate","value":"Dear {name}, thank you. Received Rs {amount} for {docId}. Balance Rs {balance}. UMSHA"},
   ],

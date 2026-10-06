@@ -807,6 +807,32 @@ var Actions = {
     return r;
   },
 
+  'accounts.upsert': function (p, env) {
+    // id means "edit this account"; without it the code must be new.
+    var existing = p.id ? Db.get('Accounts', String(p.id)) : null;
+    if (p.id && !existing) throw Validate.coreError('E_NOT_FOUND', 'Account ' + p.id + ' not found', 'id');
+    var used = existing ? Db.read('JournalLines').some(function (l) { return l.accountCode === existing.code; }) : false;
+    var r = Master.prepareAccount(p, existing, Db.read('Accounts'), used);
+    if (existing) env.tx.update('Accounts', existing.id, r.row);
+    else env.tx.append('Accounts', [r.row]);
+    return { data: r.row, audit: { docType: 'ACCOUNT', docId: r.row.code, summary: (existing ? 'Updated' : 'Added') + ' account ' + r.row.code + ' ' + r.row.name, before: existing || '', after: r.row } };
+  },
+
+  'accounts.deactivate': function (p, env) {
+    var a = Db.get('Accounts', String(need_(p.code, 'code', 'Choose the account')));
+    if (!a) throw Validate.coreError('E_NOT_FOUND', 'Account ' + p.code + ' not found', 'code');
+    if (a.systemKey) throw Validate.coreError('E_VALIDATION', a.name + ' is used by the system and cannot be switched off', 'code');
+    var bal = Reports.accountBalances(Db.read('JournalLines'))[a.code] || 0;
+    if (bal) throw Validate.coreError('E_VALIDATION', a.name + ' still has a balance of ' + Money.formatPaisa(bal) + '. Move it first.', 'code');
+    env.tx.update('Accounts', a.id, { isActive: false });
+    return { data: { code: a.code }, audit: { docType: 'ACCOUNT', docId: a.code, summary: 'Deactivated account ' + a.code + ' ' + a.name } };
+  },
+
+  'accounts.list': function () {
+    var bal = Reports.accountBalances(Db.read('JournalLines'));
+    return Db.read('Accounts').slice().sort(byCode_).map(function (a) { return Object.assign({}, a, { balancePaisa: bal[a.code] || 0 }); });
+  },
+
   'taxCodes.list': function () {
     return Db.read('TaxCodes').slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : (a.effectiveFrom < b.effectiveFrom ? -1 : 1); });
   },
@@ -1157,6 +1183,102 @@ var Actions = {
     var ids = postEntry_(env, entry);
     persistPayment_(env, Object.assign({}, entry.doc, { brand: 'SHARED' }), ids.jeId, 'WHT deposit' + (p.reference ? ' ' + p.reference : ''));
     return { data: { paymentId: docId, jeId: ids.jeId }, audit: { docType: 'PAYMENT', docId: docId, summary: 'WHT deposited ' + Money.formatPaisa(entry.doc.amountPaisa) } };
+  },
+
+  // ---------- banking and export (M8) ----------
+
+  // Import a statement CSV. The column mapping is remembered per account
+  // (Settings key bankMapping:<code>) so next month it is one click.
+  'bankrec.import': function (p, env) {
+    var acct = Db.get('Accounts', need_(p.accountCode, 'accountCode', 'Choose the bank account'));
+    if (!acct || !acct.isMoney || ['BANK', 'WALLET', 'CLEARING'].indexOf(acct.moneyKind) === -1) throw Validate.coreError('E_VALIDATION', 'Choose a bank, wallet or clearing account', 'accountCode');
+    var key = 'bankMapping:' + acct.code;
+    var saved = Db.settings()[key];
+    var mapping = p.mapping || (saved ? JSON.parse(saved) : null);
+    if (!mapping) throw Validate.coreError('E_VALIDATION', 'Tell the system which columns hold the date, description and amount', 'mapping');
+    var lines = Bankrec.parseStatement(need_(p.csvText, 'csvText', 'Choose the statement file'), mapping);
+    var date = Validate.checkDate(need_(p.statementDate, 'statementDate', 'Enter the statement end date'), 'statementDate');
+    Money.assertPaisa(p.statementBalancePaisa, 'statementBalancePaisa');
+    var id = env.tx.nextDocId('REC', date);
+    env.tx.append('BankRecs', [{ id: id, accountCode: acct.code, statementDate: date, statementBalancePaisa: p.statementBalancePaisa, status: 'OPEN', createdBy: env.user.email, createdAt: env.ts }]);
+    env.tx.append('BankStatementLines', lines.map(function (l, i) { return Object.assign({ id: Ids.formatLineId(id, i + 1), recId: id, matchedJeLineId: '' }, l); }));
+    if (p.mapping) {
+      if (saved !== undefined) env.tx.update('Settings', key, { value: JSON.stringify(p.mapping) });
+      else env.tx.append('Settings', [{ key: key, value: JSON.stringify(p.mapping) }]);
+    }
+    return { data: { recId: id, lines: lines.length }, audit: { docType: 'BANK_REC', docId: id, summary: 'Imported ' + lines.length + ' statement lines for ' + acct.name + ' to ' + date } };
+  },
+
+  'bankrec.list': function (p) {
+    return Db.read('BankRecs').filter(function (r) { return !p.accountCode || r.accountCode === String(p.accountCode); }).slice().reverse();
+  },
+
+  'bankrec.get': function (p) {
+    var rec = Db.get('BankRecs', p.recId);
+    if (!rec) throw Validate.coreError('E_NOT_FOUND', 'Reconciliation ' + p.recId + ' not found', 'recId');
+    var stmt = Db.read('BankStatementLines').filter(function (l) { return l.recId === rec.id; });
+    var journals = Db.byKey('Journal');
+    var ledger = Db.read('JournalLines').filter(function (l) { return l.accountCode === rec.accountCode && l.date <= rec.statementDate; }).map(function (l) {
+      var j = journals[l.jeId] || {};
+      return Object.assign({}, l, { docType: j.docType || '', docId: j.docId || '', jeMemo: j.memo || '' });
+    });
+    var open = ledger.filter(function (l) { return !l.reconciled; });
+    var acct = Db.get('Accounts', rec.accountCode);
+    return {
+      rec: rec, account: acct, statementLines: stmt, ledgerLines: ledger,
+      suggestions: rec.status === 'OPEN' ? Bankrec.suggestMatches(stmt, open) : [],
+      summary: Bankrec.reconciliationSummary(rec, stmt, ledger, []),
+    };
+  },
+
+  // Save matches; with finish: true the statement must fully reconcile.
+  'bankrec.match': function (p, env) {
+    var data = Actions['bankrec.get']({ recId: p.recId });
+    var rec = data.rec;
+    if (rec.status !== 'OPEN') throw Validate.coreError('E_VALIDATION', 'This reconciliation is already finished', 'recId');
+    var stmtById = {};
+    data.statementLines.forEach(function (s) { stmtById[s.id] = s; });
+    var ledgerById = {};
+    data.ledgerLines.forEach(function (l) { ledgerById[l.id] = l; });
+    var seen = {};
+    (p.matches || []).forEach(function (m, i) {
+      var s = stmtById[m.statementLineId];
+      var l = ledgerById[m.jeLineId];
+      if (!s || s.matchedJeLineId) throw Validate.coreError('E_VALIDATION', 'Statement line ' + m.statementLineId + ' is not open on this reconciliation', 'matches[' + i + ']');
+      if (!l || l.reconciled || seen[l.id]) throw Validate.coreError('E_VALIDATION', 'Ledger line ' + m.jeLineId + ' cannot be matched', 'matches[' + i + ']');
+      if (l.debitPaisa - l.creditPaisa !== s.amountPaisa) throw Validate.coreError('E_VALIDATION', 'Amounts differ: ' + Money.formatPaisa(s.amountPaisa) + ' on the statement, ' + Money.formatPaisa(l.debitPaisa - l.creditPaisa) + ' in the ledger', 'matches[' + i + ']');
+      seen[l.id] = true;
+      env.tx.update('BankStatementLines', s.id, { matchedJeLineId: l.id });
+      env.tx.update('JournalLines', l.id, { reconciled: true, reconciledDate: rec.statementDate });
+    });
+    var summary = Bankrec.reconciliationSummary(rec, data.statementLines, data.ledgerLines, p.matches || []);
+    if (p.finish) {
+      if (!summary.balanced) {
+        throw Validate.coreError('E_VALIDATION', summary.unmatchedStatement.length ? summary.unmatchedStatement.length + ' statement line(s) are not matched yet. Post them (e.g. bank charges) and match them first.' : 'Still out by ' + Money.formatPaisa(summary.differencePaisa), 'matches');
+      }
+      env.tx.update('BankRecs', rec.id, { status: 'RECONCILED', reconciledBy: env.user.email, reconciledAt: env.ts });
+    }
+    return {
+      data: { recId: rec.id, matched: (p.matches || []).length, summary: { differencePaisa: summary.differencePaisa, balanced: summary.balanced }, finished: !!p.finish },
+      audit: { docType: 'BANK_REC', docId: rec.id, summary: (p.finish ? 'Reconciled ' : 'Matched ' + (p.matches || []).length + ' lines on ') + rec.accountCode + ' to ' + rec.statementDate },
+    };
+  },
+
+  'export.quickbooksJournals': function (p) {
+    var acc = Validate.indexAccounts(Db.read('Accounts'));
+    var settings = Db.settings();
+    return Export.quickbooksJournals(Db.read('Journal'), Db.read('JournalLines'), acc.accountsByCode, Db.byKey('Contacts'), { from: p.from, to: p.to, dateFormat: settings.qbDateFormat || 'DD/MM/YYYY', currency: settings.baseCurrency || 'PKR' });
+  },
+
+  'export.table': function (p) {
+    if (!Schema.TABS[p.tab]) throw Validate.coreError('E_VALIDATION', 'Unknown tab ' + p.tab, 'tab');
+    var header = Db.header(p.tab);
+    var rows = Db.read(p.tab).map(function (r) {
+      var o = {};
+      header.forEach(function (h) { o[h] = typeof r[h] === 'object' && r[h] !== null ? JSON.stringify(r[h]) : r[h]; });
+      return o;
+    });
+    return { filename: p.tab + '.csv', csv: Csv.toCsv(rows, header), rows: rows.length };
   },
 
   // ---------- ledger ----------

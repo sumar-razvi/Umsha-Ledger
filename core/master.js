@@ -258,6 +258,36 @@ function prepareTaxCode(input, all) {
   };
 }
 
+// Chart of accounts entry (M2.2). Codes are 4 digits in the range of their
+// type (docs/03). Once an account has postings its type cannot change; system
+// accounts keep their systemKey (the posting engine finds them by it).
+const TYPE_RANGES = { ASSET: [1000, 1999], LIABILITY: [2000, 2999], EQUITY: [3000, 3999], REVENUE: [4000, 4999], COGS: [5000, 5999], EXPENSE: [6000, 6999], OTHER: [7000, 7999], TAX: [8000, 8999] };
+function prepareAccount(input, existing, all, hasPostings) {
+  const merged = Object.assign({}, existing || {}, input);
+  const code = text(merged.code);
+  if (!/^\d{4}$/.test(code)) fail('E_VALIDATION', 'Account code is 4 digits', 'code');
+  if (!existing && (all || []).some(function (a) { return String(a.code) === code; })) fail('E_VALIDATION', 'Account ' + code + ' already exists', 'code');
+  const type = oneOf(merged.type, Object.keys(TYPE_RANGES), 'type', 'Type');
+  if (existing && existing.type !== type && hasPostings) fail('E_VALIDATION', 'This account has postings, so its type cannot change', 'type');
+  const range = TYPE_RANGES[type];
+  if (+code < range[0] || +code > range[1]) fail('E_VALIDATION', type + ' accounts are numbered ' + range[0] + '–' + range[1], 'code');
+  const name = text(merged.name);
+  if (!name) fail('E_VALIDATION', 'Enter a name', 'name');
+  const isMoney = Validate.isTrue(merged.isMoney);
+  if (isMoney && type !== 'ASSET') fail('E_VALIDATION', 'Only asset accounts hold money', 'isMoney');
+  return {
+    row: {
+      id: code, code: code, name: name, type: type, subType: text(merged.subType),
+      normalBalance: ['ASSET', 'COGS', 'EXPENSE', 'TAX'].indexOf(type) >= 0 ? (Validate.isTrue(merged.isContra) ? 'CREDIT' : 'DEBIT') : (Validate.isTrue(merged.isContra) ? 'DEBIT' : 'CREDIT'),
+      isContra: Validate.isTrue(merged.isContra), systemKey: existing ? existing.systemKey || '' : '',
+      defaultBrand: oneOf(merged.defaultBrand || 'SHARED', Validate.BRANDS, 'defaultBrand', 'Brand'),
+      isMoney: isMoney, moneyKind: isMoney ? oneOf(merged.moneyKind, ['CASH', 'BANK', 'WALLET', 'CLEARING', 'PETTY'], 'moneyKind', 'Money kind') : '',
+      qbAccountName: text(merged.qbAccountName), isActive: isBlank(merged.isActive) ? true : Validate.isTrue(merged.isActive),
+      sortOrder: isBlank(merged.sortOrder) ? Number(code) : Number(merged.sortOrder),
+    },
+  };
+}
+
 // User create/update (Owner only).
 function prepareUser(input, existing, all) {
   const merged = Object.assign({}, existing || {}, input);
@@ -281,5 +311,6 @@ if (typeof module !== 'undefined') module.exports = {
   prepareJobLines,
   prepareJobUpdate,
   prepareTaxCode,
+  prepareAccount,
   prepareUser,
 };

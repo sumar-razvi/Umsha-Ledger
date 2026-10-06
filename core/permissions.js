@@ -29,6 +29,7 @@ const MATRIX = {
   'items.upsert': ['OFS', true],
   'accounts.upsert': ['OF', true],
   'accounts.deactivate': ['OF', true],
+  'accounts.list': ['OFV', false],
   'taxCodes.upsert': ['O', true],
   'taxCodes.list': ['OF', false],
 
@@ -70,6 +71,8 @@ const MATRIX = {
   'settlements.create': ['OF', true],
   'bankrec.import': ['OF', true],
   'bankrec.match': ['OF', true],
+  'bankrec.list': ['OFV', false],
+  'bankrec.get': ['OFV', false],
   'tax.settleSalesTax': ['OF', true],
   'tax.depositWht': ['OF', true],
 

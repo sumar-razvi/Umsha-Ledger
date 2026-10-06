@@ -50,6 +50,8 @@ Numbers widen past the pad width rather than wrap (`INV-2026-100000`).
 | walletAccount | 1120 | where "Wallet" payments at the till go |
 | backupFolderId | | Drive folder |
 | attachmentsFolderId | | Drive folder |
+| qbDateFormat | DD/MM/YYYY | date format in the QuickBooks export (`DD/MM/YYYY`, `MM/DD/YYYY` or `YYYY-MM-DD`; match the QuickBooks company's region) |
+| bankMapping:&lt;code&gt; | `{"dateColumn":"Date",...}` | written by the statement import: the column mapping last used for that bank account, so the next import is pre-filled |
 | whatsappReceiptTemplate | `Dear {name}, thank you. Received Rs {amount} for {docId}. Balance Rs {balance}. UMSHA` | |
 
 ### `Users`
@@ -176,7 +178,11 @@ moveType ∈ `PURCHASE, ISSUE, RETURN_TO_STOCK, BATCH_OUTPUT, SALE, SALE_RETURN,
 `id, date, store, expectedCashPaisa, countedCashPaisa, diffPaisa, expectedCardPaisa, notes, jeId, createdBy`
 
 ### `BankRecs` / `BankStatementLines`
-`id, accountCode, statementDate, statementBalancePaisa, status` / `id, recId, date, description, amountPaisa, matchedJeLineId`
+`id, accountCode, statementDate, statementBalancePaisa, status, createdBy, createdAt, reconciledBy, reconciledAt` / `id, recId, date, description, amountPaisa, matchedJeLineId`
+- IDs `REC-2026-00003`; statement lines `REC-2026-00003-001`.
+- `status` ∈ `OPEN, RECONCILED`. A reconciliation can only be finished when every statement line is matched and the difference is zero.
+- `amountPaisa` is signed like the account's ledger (debit − credit): money in positive, money out negative.
+- Matching writes `BankStatementLines.matchedJeLineId` and sets `JournalLines.reconciled`/`reconciledDate` (from empty, the only change ever made to a posted line).
 
 ---
 
