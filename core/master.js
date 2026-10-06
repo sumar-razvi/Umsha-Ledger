@@ -140,27 +140,9 @@ function prepareJob(input, ctx, today) {
     revenueAccount: '', invoiceId: '', collection: text(input.collection), notes: text(input.notes),
     budgetCostPaisa: optionalPaisa(input.budgetCostPaisa, 'budgetCostPaisa'),
   };
-  const lines = (input.lines || []).map(function (l, i) {
-    const field = 'lines[' + i + ']';
-    const qty = isBlank(l.qty) ? 1 : l.qty;
-    if (Inventory.toMilli(qty) <= 0) fail('E_VALIDATION', 'Quantity must be more than zero', field + '.qty');
-    if (type === 'MTO_ORDER') {
-      const description = text(l.description);
-      if (!description) fail('E_VALIDATION', 'Describe each piece', field + '.description');
-      Money.assertPaisa(l.unitPricePaisa, field + '.unitPricePaisa');
-      if (l.unitPricePaisa < 0) fail('E_VALIDATION', 'Price cannot be negative', field + '.unitPricePaisa');
-      const discount = optionalPaisa(l.discountPaisa, field + '.discountPaisa') || 0;
-      const gross = Inventory.qtyTimesPaisa(qty, l.unitPricePaisa);
-      if (discount > gross) fail('E_VALIDATION', 'A discount is bigger than its line', field + '.discountPaisa');
-      job.quotedPricePaisa += gross - discount;
-      return { description: description, itemId: '', qty: qty, unitPricePaisa: l.unitPricePaisa, discountPaisa: discount, weight: '', sortOrder: i + 1 };
-    }
-    const item = ctx.items && ctx.items[l.itemId];
-    if (!item || item.category !== 'SKU') fail('E_VALIDATION', 'Choose a finished SKU for each planned output', field + '.itemId');
-    const weight = isBlank(l.weight) ? 1 : Number(l.weight);
-    if (!(weight > 0)) fail('E_VALIDATION', 'Weight must be more than zero', field + '.weight');
-    return { description: text(l.description) || item.name, itemId: item.id, qty: qty, unitPricePaisa: '', discountPaisa: '', weight: weight, sortOrder: i + 1 };
-  });
+  const prepared = prepareJobLines(type, input.lines || [], ctx, 0);
+  const lines = prepared.lines;
+  job.quotedPricePaisa = prepared.totalPaisa;
   if (type === 'MTO_ORDER') {
     const c = ctx.contacts && ctx.contacts[input.contactId];
     if (!c || (c.kind !== 'CUSTOMER' && c.kind !== 'BOTH')) fail('E_VALIDATION', 'Choose the customer for this order', 'contactId');
@@ -175,6 +157,77 @@ function prepareJob(input, ctx, today) {
     job.quotedPricePaisa = '';
   }
   return { job: job, lines: lines };
+}
+
+// Validate job lines: MTO lines are priced pieces; RTW lines are planned SKU
+// outputs with a cost-split weight. Returns {lines, totalPaisa}.
+function prepareJobLines(type, input, ctx, sortFrom) {
+  let total = 0;
+  const lines = input.map(function (l, i) {
+    const field = 'lines[' + i + ']';
+    const qty = isBlank(l.qty) ? 1 : l.qty;
+    if (Inventory.toMilli(qty) <= 0) fail('E_VALIDATION', 'Quantity must be more than zero', field + '.qty');
+    if (type === 'MTO_ORDER') {
+      const description = text(l.description);
+      if (!description) fail('E_VALIDATION', 'Describe each piece', field + '.description');
+      Money.assertPaisa(l.unitPricePaisa, field + '.unitPricePaisa');
+      if (l.unitPricePaisa < 0) fail('E_VALIDATION', 'Price cannot be negative', field + '.unitPricePaisa');
+      const discount = optionalPaisa(l.discountPaisa, field + '.discountPaisa') || 0;
+      const gross = Inventory.qtyTimesPaisa(qty, l.unitPricePaisa);
+      if (discount > gross) fail('E_VALIDATION', 'A discount is bigger than its line', field + '.discountPaisa');
+      total += gross - discount;
+      return { description: description, itemId: '', qty: qty, unitPricePaisa: l.unitPricePaisa, discountPaisa: discount, weight: '', sortOrder: sortFrom + i + 1 };
+    }
+    const item = ctx.items && ctx.items[l.itemId];
+    if (!item || item.category !== 'SKU') fail('E_VALIDATION', 'Choose a finished SKU for each planned output', field + '.itemId');
+    const weight = isBlank(l.weight) ? 1 : Number(l.weight);
+    if (!(weight > 0)) fail('E_VALIDATION', 'Weight must be more than zero', field + '.weight');
+    return { description: text(l.description) || item.name, itemId: item.id, qty: qty, unitPricePaisa: '', discountPaisa: '', weight: weight, sortOrder: sortFrom + i + 1 };
+  });
+  return { lines: lines, totalPaisa: total };
+}
+
+const MTO_STATUS_FLOW = ['OPEN', 'IN_PRODUCTION', 'READY'];
+
+// Changes to a job before delivery: details, status (OPEN / IN_PRODUCTION /
+// READY only; delivery and cancellation post entries and have their own
+// actions), extra charges (addLines) and discounts on existing lines.
+// Returns {fields, newLines, lineUpdates}.
+function prepareJobUpdate(job, existingLines, input, ctx) {
+  if (['DELIVERED', 'CANCELLED', 'COMPLETED'].indexOf(job.status) >= 0) {
+    fail('E_JOB_CLOSED', 'Job ' + job.id + ' is ' + job.status.toLowerCase() + ' and cannot be changed', 'id');
+  }
+  const fields = {};
+  ['title', 'description', 'notes', 'collection'].forEach(function (k) {
+    if (input[k] !== undefined) fields[k] = text(input[k]);
+  });
+  if (fields.title === '') fail('E_VALIDATION', 'Enter a title', 'title');
+  if (input.promisedDate !== undefined) {
+    fields.promisedDate = isBlank(input.promisedDate) ? '' : Validate.checkDate(input.promisedDate, 'promisedDate');
+    if (fields.promisedDate && fields.promisedDate < job.bookedDate) fail('E_VALIDATION', 'Promised date is before the booking date', 'promisedDate');
+  }
+  if (input.budgetCostPaisa !== undefined) fields.budgetCostPaisa = optionalPaisa(input.budgetCostPaisa, 'budgetCostPaisa');
+  if (input.status !== undefined && input.status !== job.status) {
+    const allowed = job.type === 'MTO_ORDER' ? MTO_STATUS_FLOW : ['OPEN'];
+    if (allowed.indexOf(input.status) === -1) fail('E_VALIDATION', 'Use Deliver, Complete or Cancel for that', 'status');
+    fields.status = input.status;
+  }
+  let quoted = job.type === 'MTO_ORDER' ? Number(job.quotedPricePaisa || 0) : '';
+  const lineUpdates = [];
+  (input.lineDiscounts || []).forEach(function (d, i) {
+    const line = existingLines.filter(function (l) { return l.id === d.lineId; })[0];
+    if (!line || job.type !== 'MTO_ORDER') fail('E_NOT_FOUND', 'Line ' + d.lineId + ' is not on this order', 'lineDiscounts[' + i + ']');
+    const discount = optionalPaisa(d.discountPaisa, 'lineDiscounts[' + i + '].discountPaisa') || 0;
+    const gross = Inventory.qtyTimesPaisa(line.qty, line.unitPricePaisa);
+    if (discount > gross) fail('E_VALIDATION', 'A discount is bigger than its line', 'lineDiscounts[' + i + '].discountPaisa');
+    quoted += (line.discountPaisa || 0) - discount;
+    lineUpdates.push({ id: line.id, fields: { discountPaisa: discount } });
+  });
+  const maxSort = existingLines.reduce(function (m, l) { return Math.max(m, Number(l.sortOrder) || 0); }, 0);
+  const added = prepareJobLines(job.type, input.addLines || [], ctx, maxSort);
+  if (job.type === 'MTO_ORDER') quoted += added.totalPaisa;
+  if (job.type === 'MTO_ORDER' && (added.lines.length || lineUpdates.length)) fields.quotedPricePaisa = quoted;
+  return { fields: fields, newLines: added.lines, lineUpdates: lineUpdates };
 }
 
 // User create/update (Owner only).
@@ -197,5 +250,7 @@ if (typeof module !== 'undefined') module.exports = {
   prepareContact,
   prepareItem,
   prepareJob,
+  prepareJobLines,
+  prepareJobUpdate,
   prepareUser,
 };

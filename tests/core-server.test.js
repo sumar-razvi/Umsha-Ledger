@@ -204,3 +204,26 @@ describe('account ledger report', () => {
     assert.throws(() => Reports.accountLedger(lines, book.acc, { accountCode: '9999' }), err('E_NOT_FOUND'));
   });
 });
+
+describe('receipts', () => {
+  const Receipts = require('../core/receipts.js');
+  test('template placeholders, unknown ones left alone', () => {
+    assert.equal(Receipts.fillTemplate('Hi {name}, {nope} {amount}', { name: 'Ayesha', amount: '1,000' }), 'Hi Ayesha, {nope} 1,000');
+  });
+  test('WhatsApp link with and without a number', () => {
+    assert.equal(Receipts.whatsappUrl('923001234567', 'Rs 1,000 & thanks'), 'https://wa.me/923001234567?text=Rs%201%2C000%20%26%20thanks');
+    assert.equal(Receipts.whatsappUrl('', 'x'), 'https://wa.me/?text=x');
+  });
+  test('order gross and advance receipt with Indian grouping', () => {
+    assert.equal(Receipts.orderGross(50000000, 1800), 59000000);
+    assert.equal(Receipts.orderGross(50000000, 0), 50000000);
+    const r = Receipts.paymentReceipt({
+      settings: { currencyGrouping: 'INDIAN' }, contact: { name: 'Ayesha', phone: '923001234567' },
+      payment: { id: 'PAY-2026-00001', date: '2026-10-01', kind: 'CUSTOMER_ADVANCE', amountPaisa: 30000000 },
+      job: { id: 'JOB-2026-00001', title: 'Bridal' }, balancePaisa: 29000000,
+    });
+    assert.equal(r.whatsappText, 'Dear Ayesha, thank you. Received Rs 3,00,000 for JOB-2026-00001. Balance Rs 2,90,000. UMSHA');
+    assert.equal(r.balancePaisa, 29000000);
+    assert.equal(r.lines.at(-1).label, 'Advance received');
+  });
+});

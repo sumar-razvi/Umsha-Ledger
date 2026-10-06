@@ -378,3 +378,99 @@ describe('nightly job and triggers', () => {
     assert.deepEqual(JSON.parse(gas.context.doGet().getContent()), { ok: true, data: { service: 'umsha-ledger', status: 'ok' } });
   });
 });
+
+describe('MTO order end to end through the API (M3)', () => {
+  function sumLines(gas, jeId) {
+    const out = {};
+    gas.rows('JournalLines').filter((l) => l.jeId === jeId).forEach((l) => {
+      const k = (l.debitPaisa ? 'Dr ' : 'Cr ') + l.accountCode + ' ' + l.brand;
+      out[k] = (out[k] || 0) + (l.debitPaisa || l.creditPaisa);
+    });
+    return out;
+  }
+
+  test('book, advance, karigar work, deliver (R8), receive balance (R9), receipts', () => {
+    const { gas, users } = createSystem();
+    const { customerId, jobId } = withOrder(gas, users);
+    const adv = gas.call(users.studio, 'payments.receiveAdvance', { jobId, date: '2026-10-01', amountPaisa: rs(300000), moneyAccountCode: '1100' });
+    assert.deepEqual(sumLines(gas, adv.data.jeId), { 'Dr 1100 UMSHA': rs(300000), 'Cr 2100 UMSHA': rs(300000) });
+
+    const r1 = gas.call(users.studio, 'receipts.render', { docType: 'PAYMENT', docId: adv.data.paymentId });
+    assert.equal(r1.data.balancePaisa, rs(290000)); // 500,000 + 18% - 300,000
+    assert.equal(r1.data.whatsappText, 'Dear Ayesha, thank you. Received Rs 300,000 for JOB-2026-00001. Balance Rs 290,000. UMSHA');
+    assert.ok(r1.data.whatsappUrl.startsWith('https://wa.me/923001234567?text=Dear%20Ayesha'));
+
+    const k = gas.call(users.owner, 'contacts.upsert', { kind: 'VENDOR', vendorType: 'KARIGAR', name: 'Aslam' });
+    const work = gas.call(users.studio, 'karigar.logWork', { contactId: k.data.contact.id, jobId, date: '2026-10-05', costComponent: 'EMBROIDERY', pieces: 40, ratePaisa: rs(2000) });
+    assert.ok(work.ok, JSON.stringify(work));
+    assert.equal(gas.rows('Bills')[0].grossPaisa, rs(80000));
+    assert.equal(gas.rows('BillLines')[0].costComponent, 'EMBROIDERY');
+
+    assert.ok(gas.call(users.studio, 'jobs.update', { id: jobId, status: 'READY' }).ok);
+    const detail = gas.call(users.studio, 'jobs.get', { id: jobId }).data;
+    assert.equal(detail.costSheet.totalPaisa, rs(80000));
+    assert.equal(detail.projectedMarginPaisa, rs(420000));
+    assert.equal(detail.entries.length, 2);
+
+    const d = gas.call(users.studio, 'jobs.deliver', { jobId, date: '2026-10-06' });
+    assert.ok(d.ok, JSON.stringify(d));
+    assert.equal(d.data.invoice.id, 'INV-2026-00001');
+    assert.deepEqual(sumLines(gas, d.data.jeId), {
+      'Dr 1200 UMSHA': rs(590000) + rs(0), 'Cr 4010 UMSHA': rs(500000), 'Cr 2200 UMSHA': rs(90000),
+      'Dr 2100 UMSHA': rs(300000), 'Cr 1200 UMSHA': rs(300000), 'Dr 5030 UMSHA': rs(80000), 'Cr 1330 UMSHA': rs(80000),
+    });
+    assert.equal(gas.rows('Jobs')[0].status, 'DELIVERED');
+    assert.equal(gas.rows('Invoices')[0].balancePaisa, rs(290000));
+    assert.equal(gas.rows('InvoiceLines').length, 1);
+    assert.equal(gas.call(users.studio, 'jobs.update', { id: jobId, title: 'x' }).code, 'E_JOB_CLOSED');
+
+    const pay = gas.call(users.store, 'payments.receive', {
+      contactId: customerId, date: '2026-10-06', moneyAccountCode: '1100', amountPaisa: rs(290000),
+      allocations: [{ docType: 'INVOICE', docId: 'INV-2026-00001', amountPaisa: rs(290000) }],
+    });
+    assert.ok(pay.ok, JSON.stringify(pay));
+    assert.deepEqual(sumLines(gas, pay.data.jeId), { 'Dr 1100 UMSHA': rs(290000), 'Cr 1200 UMSHA': rs(290000) });
+    assert.equal(gas.rows('Invoices')[0].balancePaisa, 0);
+    assert.equal(gas.call(users.store, 'payments.receive', {
+      contactId: customerId, date: '2026-10-06', moneyAccountCode: '1100', amountPaisa: 1, allocations: [{ docType: 'INVOICE', docId: 'INV-2026-00001', amountPaisa: 1 }],
+    }).code, 'E_OVERPAY');
+
+    const r2 = gas.call(users.store, 'receipts.render', { docType: 'PAYMENT', docId: pay.data.paymentId });
+    assert.equal(r2.data.balancePaisa, 0);
+    assert.match(r2.data.whatsappText, /Received Rs 290,000 for INV-2026-00001\. Balance Rs 0\./);
+    const inv = gas.call(users.studio, 'receipts.render', { docType: 'INVOICE', docId: 'INV-2026-00001' });
+    assert.equal(inv.data.grossPaisa, rs(590000));
+    assert.equal(inv.data.lines[0].label, 'Lehenga with dupatta');
+
+    const tb = gas.context.Reports.trialBalance(gas.rows('JournalLines').map((l) => Object.assign({}, l, { accountCode: String(l.accountCode) })), gas.context.Validate.indexAccounts(gas.rows('Accounts')), {});
+    assert.ok(tb.balanced);
+  });
+
+  test('charges and discounts before delivery change the quote', () => {
+    const { gas, users } = createSystem();
+    const { jobId } = withOrder(gas, users);
+    const u = gas.call(users.studio, 'jobs.update', {
+      id: jobId, addLines: [{ description: 'Extra fitting', qty: 1, unitPricePaisa: rs(10000) }],
+      lineDiscounts: [{ lineId: jobId + '-01', discountPaisa: rs(20000) }],
+    });
+    assert.ok(u.ok, JSON.stringify(u));
+    assert.equal(gas.rows('Jobs')[0].quotedPricePaisa, rs(490000));
+    assert.equal(gas.rows('JobLines').length, 2);
+    const d = gas.call(users.studio, 'jobs.deliver', { jobId, date: '2026-10-06' });
+    assert.equal(d.data.invoice.netPaisa, rs(490000));
+    assert.equal(gas.call(users.studio, 'jobs.update', { id: jobId, status: 'DELIVERED' }).code, 'E_JOB_CLOSED');
+  });
+
+  test('cancel an order: refund part of the advance, keep the rest (R17)', () => {
+    const { gas, users } = createSystem();
+    const { jobId } = withOrder(gas, users);
+    gas.call(users.studio, 'payments.receiveAdvance', { jobId, date: '2026-10-01', amountPaisa: rs(100000), moneyAccountCode: '1100' });
+    assert.equal(gas.call(users.studio, 'jobs.cancel', { jobId, date: '2026-10-02', refundPaisa: rs(60000), moneyAccountCode: '1100' }).code, 'E_ROLE');
+    const c = gas.call(users.finance, 'jobs.cancel', { jobId, date: '2026-10-02', refundPaisa: rs(60000), moneyAccountCode: '1100', wipTreatment: 'WRITE_OFF' });
+    assert.ok(c.ok, JSON.stringify(c));
+    assert.deepEqual(sumLines(gas, c.data.jeId), { 'Dr 2100 UMSHA': rs(100000), 'Cr 1100 UMSHA': rs(60000), 'Cr 4040 UMSHA': rs(40000) });
+    const refund = gas.rows('Payments').find((x) => x.kind === 'REFUND');
+    assert.equal(refund.amountPaisa, rs(60000));
+    assert.equal(gas.rows('Jobs')[0].status, 'CANCELLED');
+  });
+});

@@ -28,5 +28,7 @@ Needs Node 20+. No dependencies.
 
 ```
 npm test        # node --test: all golden scenarios for completed milestones
-npm run build   # regenerate apps-script/Core.gs from /core (commit the result)
+npm run build   # regenerate apps-script/Core.gs, Seed.gs and core.bundle.js (commit the result)
+npm run serve   # demo at http://localhost:8000: the real server code, in memory, "sign in as" any role
+npm run test:ui # browser test of index.html (needs Playwright with Chromium)
 ```

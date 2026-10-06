@@ -88,7 +88,7 @@ Permission key: O=Owner F=Finance S=Studio T=Store V=Viewer.
 | `sale.exchange` | O F T | `{originalSaleId, returnLines[], newLines[], payments[]}` |
 | `cashup.submit` | O F T | `{date, store, countedCashPaisa, notes}` → R16 |
 | `invoices.get` / `invoices.list` | O F S V | |
-| `receipts.render` | all except V | `{docType, docId}` → `{html, whatsappText, whatsappUrl}` |
+| `receipts.render` | all except V | `{docType: 'PAYMENT'|'INVOICE', docId}` → receipt/invoice content (`core/receipts.js`: company, to, lines, totals, balance) + `{whatsappText, whatsappUrl}`; the page renders the printable view |
 
 ### Purchases & payables
 | action | roles | payload |
@@ -155,6 +155,7 @@ QuickBooks export: one row per journal line. Columns follow the QuickBooks Onlin
 - Writes are buffered and committed in one batch per tab in this order: Sequences, StockMoves, ItemBalances, Journal, JournalLines, document tabs, AuditLog, Requests. Sequences go first so a failure can leave a gap in numbering but never reuse a number.
 - `Db.gs` refuses any change to posted Journal, JournalLines, StockMoves or AuditLog rows except `Journal.reversedByJeId` and `JournalLines.reconciled`/`reconciledDate`, and only from empty.
 - Editor-only functions: `setupRun` (first setup), `installTriggers`, `nightly`. See `README-deploy.md`.
+- M3 adds: `jobs.update` (details, status OPEN → IN_PRODUCTION → READY, `addLines` for extra charges, `lineDiscounts`), `jobs.deliver` (R8; creates the invoice), `payments.receive` (R9), `invoices.get/list`, `receipts.render`, `jobs.issueStock`/`jobs.returnStock` (R7), `karigar.logWork` (R3 bill), `jobs.cancel` (R17; a refund is recorded as a `REFUND` payment), `bills.create` (R2–R4). `jobs.get` returns the cost sheet, advances held, balance due and a timeline of journal entries.
 
 ## Error codes
 `E_AUTH, E_ROLE, E_BUSY, E_VALIDATION (with field), E_NOT_FOUND, E_UNBALANCED, E_EMPTY_BRAND, E_NEG_AMOUNT, E_PERIOD_LOCKED, E_INACTIVE_ACCOUNT, E_NEG_STOCK, E_JOB_CLOSED, E_OVERPAY, E_TAX_OVERRIDE_NO_REASON, E_INTERNAL`

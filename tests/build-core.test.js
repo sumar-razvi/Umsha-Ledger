@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
-const { buildCore, buildSeed, OUT_FILE, SEED_FILE } = require('../scripts/build-core.js');
+const { buildCore, buildSeed, OUT_FILE, SEED_FILE, BROWSER_FILE } = require('../scripts/build-core.js');
 
 function runInAppsScriptLikeContext(source) {
   const context = vm.createContext({});
@@ -57,6 +57,7 @@ describe('scripts/build-core.js', () => {
 
   test('committed apps-script/Core.gs is up to date (run `npm run build` if this fails)', () => {
     assert.equal(fs.readFileSync(OUT_FILE, 'utf8'), out);
+    assert.equal(fs.readFileSync(BROWSER_FILE, 'utf8'), out, 'core.bundle.js is stale');
   });
 
   test('committed apps-script/Seed.gs is up to date and holds every seed row', () => {

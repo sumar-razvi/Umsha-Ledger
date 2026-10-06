@@ -9,6 +9,8 @@
   },
   "scripts": {
     "test": "node --test",
-    "build": "node scripts/build-core.js"
+    "build": "node scripts/build-core.js",
+    "test:ui": "node tests/ui/run.js",
+    "serve": "node scripts/dev-server.js"
   }
 }

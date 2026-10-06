@@ -24,6 +24,9 @@ const CORE_DIR = path.join(ROOT, 'core');
 const OUT_FILE = path.join(ROOT, 'apps-script', 'Core.gs');
 const SEED_DIR = path.join(ROOT, 'seed');
 const SEED_FILE = path.join(ROOT, 'apps-script', 'Seed.gs');
+// The same bundle for the browser (index.html), so the page parses and
+// formats money with exactly the code the tests cover.
+const BROWSER_FILE = path.join(ROOT, 'core.bundle.js');
 
 const REQUIRE_RE = /^const (\w+) = require\('\.\/([\w-]+)\.js'\);[ \t]*\r?\n/gm;
 const EXPORT_RE = /^if \(typeof module !== 'undefined'\) module\.exports = (\{[\s\S]*\});\s*$/m;
@@ -133,7 +136,8 @@ if (require.main === module) {
     const out = buildCore();
     fs.mkdirSync(path.dirname(OUT_FILE), { recursive: true });
     fs.writeFileSync(OUT_FILE, out);
-    console.log('Wrote ' + path.relative(ROOT, OUT_FILE) + ' (' + out.split('\n').length + ' lines)');
+    fs.writeFileSync(BROWSER_FILE, out);
+    console.log('Wrote ' + path.relative(ROOT, OUT_FILE) + ' and ' + path.relative(ROOT, BROWSER_FILE) + ' (' + out.split('\n').length + ' lines)');
     const seed = buildSeed();
     fs.writeFileSync(SEED_FILE, seed);
     console.log('Wrote ' + path.relative(ROOT, SEED_FILE) + ' (' + seed.split('\n').length + ' lines)');
@@ -143,4 +147,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildCore, buildSeed, namespaceFor, OUT_FILE, SEED_FILE };
+module.exports = { buildCore, buildSeed, namespaceFor, OUT_FILE, SEED_FILE, BROWSER_FILE };

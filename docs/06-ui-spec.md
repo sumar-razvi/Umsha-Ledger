@@ -92,5 +92,12 @@ Company, users and roles, chart of accounts (with QuickBooks mapping column), ta
 ## Printable documents
 Invoice, receipt, sale receipt (80 mm thermal-friendly CSS option), customer statement, vendor payment voucher with WHT. All via `@media print` on the same page. Show company NTN/STRN where set.
 
+## Implementation notes (M3)
+
+- The page loads `core.bundle.js` (generated, identical to `Core.gs`) so money parsing/formatting, tax previews and permission checks in the browser use the same tested code as the server.
+- Writes go into a queue in `localStorage` with their `requestId` before they are sent; network failures and `E_BUSY` are retried with backoff (2 s doubling to 60 s), other errors are shown and dropped. The top bar shows `Saved` / `Saving…` / `Offline: n pending`.
+- Form rows wrap plain inputs in `<label>`; composite controls (pickers) use a `<div>`, because a label forwards clicks to its first control.
+- Not yet built screens show a "arrives in milestone Mx" page rather than being hidden, so each role's navigation matches the table above.
+
 ## WhatsApp
 `https://wa.me/<92XXXXXXXXXX>?text=<encoded>` from `Settings.whatsappReceiptTemplate`. Opens WhatsApp with prefilled text; user attaches the printed PDF if needed. No WhatsApp API integration in v1.
