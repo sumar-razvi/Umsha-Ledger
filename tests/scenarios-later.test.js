@@ -219,3 +219,58 @@ describe('inventory reconciliation (M5.7)', () => {
     assert.equal(r.rows.find((x) => x.systemKey === 'INV_FG').stockPaisa, 10000000 - 833334 + 277778 - 277778);
   });
 });
+
+describe('M7 reports on the T01-T12 state', () => {
+  const { book } = runThroughT12();
+  const sales = Object.values(book.sales).map((s) => s.sale);
+  const saleLines = Object.values(book.sales).flatMap((s) => s.lines.map((l) => {
+    const neg = s.sale.kind === 'RETURN';
+    return Object.assign({}, l, { saleId: s.sale.id, qty: neg ? -l.qty : l.qty, netPaisa: neg ? -l.netPaisa : l.netPaisa, costPaisa: neg ? -l.costPaisa : l.costPaisa });
+  }));
+
+  test('SKU margin, net of returns', () => {
+    const r = Reports.skuMargin(sales, saleLines, book.items, {});
+    assert.deepEqual(r.rows.map((x) => [x.itemId, x.units, x.netPaisa, x.costPaisa, x.marginPaisa]), [
+      ['SKU-A', 1, rs('8,000'), 277778, rs('8,000') - 277778],
+      ['SKU-B', 1, rs('5,000'), 277778, rs('5,000') - 277778],
+    ]);
+    assert.equal(r.collections[0].netPaisa, rs('13,000'));
+  });
+
+  test('sales tax summary: output 92,340, input 18,000, payable 74,340', () => {
+    const t = Reports.salesTaxSummary(book.lines, book.acc, { from: '2026-10-01', to: '2026-10-31' });
+    assert.deepEqual([t.outputPaisa, t.inputPaisa, t.netPayablePaisa], [rs('92,340'), rs('18,000'), rs('74,340')]);
+    assert.deepEqual(t.outputByBrand, { UMSHA: rs('90,000'), MIRAE: rs('2,340') });
+  });
+
+  test('WHT register: 8,000 + 4,500', () => {
+    const pays = Object.values(book.otherDocs).filter((d) => d.kind === 'VENDOR_PAYMENT');
+    const allocs = pays.flatMap((p) => p.allocations.map((a) => Object.assign({ paymentId: p.id }, a)));
+    const r = Reports.whtRegister(pays, allocs, book.contacts, {});
+    assert.equal(r.totalWhtPaisa, rs('12,500'));
+    assert.deepEqual(r.rows.map((x) => [x.contactId, x.grossPaisa, x.whtPaisa]), [['VEN-00003', rs('80,000'), rs('8,000')], ['VEN-00001', rs('118,000'), rs('4,500')]]);
+  });
+
+  test('cash position: money accounts, advances held, payables', () => {
+    const c = Reports.cashPosition(book.lines, book.acc, Object.values(book.invoices), Object.values(book.bills), { asOf: '2026-10-31', days: 7 });
+    const bal = Reports.accountBalances(book.lines);
+    assert.equal(c.cashPaisa, c.accounts.reduce((t, a) => t + a.balancePaisa, 0));
+    assert.equal(c.accounts.find((a) => a.code === '1100').balancePaisa, bal['1100']);
+    assert.equal(c.advancesHeldPaisa, 0);
+    assert.equal(c.payable.totalPaisa, rs('407,000'));
+    assert.equal(c.receivable.totalPaisa, 0);
+  });
+
+  test('close checklist: blocking checks pass; a missing cash-up is a warning', () => {
+    const c = Reports.closeChecklist('2026-10', {
+      lines: book.lines, stockMoves: book.stockMoves, acc: book.acc, items: book.items, sales: sales,
+      cashUps: [], stockCounts: [{ date: '2026-10-11', status: 'POSTED' }], periods: [], bankRecs: [],
+    });
+    const byKey = Object.fromEntries(c.checks.map((x) => [x.key, x]));
+    assert.ok(byKey.TB.ok && byKey.CONTROL.ok && byKey.COUNT.ok);
+    assert.equal(byKey.CASHUP.ok, false);
+    assert.match(byKey.CASHUP.detail, /2026-10-09/);
+    assert.ok(c.canClose);
+    assert.ok(c.warnings >= 2); // cash-up and bank reconciliation
+  });
+});

@@ -18,6 +18,8 @@ const MATRIX = {
   'periods.list': ['OFV', false],
   'periods.close': ['O', true],
   'periods.reopen': ['O', true],
+  'periods.checklist': ['OF', false],
+  'year.close': ['O', true],
 
   'contacts.search': ['OFST', false],
   'contacts.get': ['OFST', false],

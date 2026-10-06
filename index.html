@@ -548,11 +548,11 @@ const CONFIG = {
 
   // ---------- shell ----------
   const NAV = {
-    OWNER: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Settings', '/settings']],
-    FINANCE: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Journals', '/journals']],
+    OWNER: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/soon/banking'], ['Reports', '/reports'], ['Settings', '/settings']],
+    FINANCE: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/soon/banking'], ['Reports', '/reports'], ['Journals', '/journals']],
     STUDIO: [['Orders', '/orders'], ['Customers', '/customers'], ['Inventory', '/inventory'], ['Batches', '/batches'], ['Karigars', '/karigars']],
     STORE: [['New sale', '/sale'], ['Returns', '/returns'], ['Today', '/today'], ['Cash-up', '/cashup'], ['Petty expense', '/purchases/expense']],
-    VIEWER: [['Reports', '/soon/reports'], ['Journals', '/journals']],
+    VIEWER: [['Reports', '/reports'], ['Journals', '/journals']],
   };
   function renderShell(path) {
     if (document.getElementById('view')) { markNav(path); return; }
@@ -619,7 +619,7 @@ const CONFIG = {
 
   route('/orders', async (view, args, params) => {
     const filter = params.get('status') || 'open';
-    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Orders'), can('jobs.create') ? h('a', { class: 'btn primary', href: '#/orders/new' }, 'New order') : null));
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Orders'), can('reports.jobProfitability') ? h('a', { class: 'btn ghost', href: '#/reports/jobs' }, 'Profit by order') : null, can('jobs.create') ? h('a', { class: 'btn primary', href: '#/orders/new' }, 'New order') : null));
     const chips = [['open', 'Open'], ['READY', 'Ready'], ['DELIVERED', 'Delivered'], ['CANCELLED', 'Cancelled'], ['all', 'All']];
     view.appendChild(h('div', { class: 'chips' }, chips.map(([k, l]) => h('button', { type: 'button', class: 'chip' + (k === filter ? ' on' : ''), onclick: () => go('#/orders?status=' + k) }, l))));
     const q = h('input', { type: 'search', placeholder: 'Search order, customer or title', 'aria-label': 'Search orders' });
@@ -1099,12 +1099,13 @@ const CONFIG = {
     const d = await api('journal.get', { jeId: id });
     const j = d.journal;
     view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Journal entry ' + j.id), j.reversedByJeId ? statusPill('VOID') : null));
-    view.appendChild(h('p', { class: 'muted' }, fmtDate(j.date), ' · ', DOC_LABEL[j.docType] || j.docType, ' ', j.docId, j.memo ? ' · ' + j.memo : '',
+    const src = sourceLink(j);
+    view.appendChild(h('p', { class: 'muted' }, fmtDate(j.date), ' · ', DOC_LABEL[j.docType] || j.docType, ' ', src ? h('a', { href: src }, j.docId) : j.docId, j.memo ? ' · ' + j.memo : '',
       j.reversesJeId ? h('span', {}, ' · reverses ', h('a', { href: '#/je/' + j.reversesJeId }, j.reversesJeId)) : '',
       j.reversedByJeId ? h('span', {}, ' · reversed by ', h('a', { href: '#/je/' + j.reversedByJeId }, j.reversedByJeId)) : ''));
     const totals = d.lines.reduce((s, l) => ({ debitPaisa: s.debitPaisa + l.debitPaisa, creditPaisa: s.creditPaisa + l.creditPaisa }), { debitPaisa: 0, creditPaisa: 0 });
     view.appendChild(h('div', { class: 'card' }, dataTable([
-      { key: 'accountCode', label: 'Account', render: (l) => h('span', {}, l.accountCode + ' ' + l.accountName) },
+      { key: 'accountCode', label: 'Account', render: (l) => can('ledger.account') ? h('a', { href: '#/ledger/' + l.accountCode + '?to=' + j.date }, l.accountCode + ' ' + l.accountName) : h('span', {}, l.accountCode + ' ' + l.accountName) },
       { key: 'brand', label: 'Brand', render: (l) => brandPill(l.brand), csv: (l) => l.brand },
       { key: 'ref', label: 'For', opt: true, render: (l) => [l.contactId, l.jobId, l.itemId, l.costComponent].filter(Boolean).join(' · '), csv: (l) => [l.contactId, l.jobId, l.itemId].filter(Boolean).join(' ') },
       { key: 'debitPaisa', label: 'Debit', money: true }, { key: 'creditPaisa', label: 'Credit', money: true },
@@ -1128,13 +1129,6 @@ const CONFIG = {
       } }, 'Reverse this entry'));
     }
   });
-  route('/journals', async (view) => {
-    view.appendChild(h('h1', {}, 'Journals'));
-    const jeInput = h('input', { placeholder: 'JE-2026-00001' });
-    view.appendChild(h('div', { class: 'card' }, h('div', { class: 'row' }, field('Open a journal entry', jeInput), h('button', { type: 'button', onclick: () => go('#/je/' + jeInput.value.trim().toUpperCase()) }, 'Open'))));
-    view.appendChild(h('p', { class: 'muted' }, 'The journal list, manual journal entry and account ledgers arrive with milestone M7.'));
-  });
-
   // ---------- settings (Owner) ----------
   route('/settings', async (view) => {
     view.appendChild(h('h1', {}, 'Settings'));
@@ -1178,12 +1172,18 @@ const CONFIG = {
           const reason = prompt('Why reopen ' + m + '?');
           if (!reason) return;
           try { await save('periods.reopen', { periodId: m, reason }, 'Reopen ' + m); render(); } catch (e) { toast(e.message, 'bad'); }
-        } }, 'Reopen') : h('button', { type: 'button', onclick: async () => {
-          if (!confirm('Close ' + m + '? Nothing dated in that month can be posted until it is reopened.')) return;
-          try { await save('periods.close', { periodId: m }, 'Close ' + m); render(); } catch (e) { toast(e.message, 'bad'); }
-        } }, 'Close'))));
+        } }, 'Reopen') : h('button', { type: 'button', onclick: () => closeMonthSheet(m) }, 'Close'))));
     });
     view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Months'), pbox));
+    const fyStart = Number(state.settings.fiscalYearStartMonth || 7);
+    const y = Number(today().slice(0, 4));
+    const lastFyEnd = new Date(Date.UTC(Number(today().slice(5, 7)) >= fyStart ? y : y - 1, fyStart - 1, 0)).toISOString().slice(0, 10);
+    const fyEnd = h('input', { type: 'date', value: lastFyEnd });
+    view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Year-end close'), h('p', { class: 'muted small' }, 'Moves the year\'s profit or loss into retained earnings with one entry dated the last day of the fiscal year. Reports for that year still show its results.'),
+      h('div', { class: 'row' }, field('Last day of the fiscal year', fyEnd), h('div', { style: 'flex:0 0 auto;margin-bottom:12px' }, h('button', { type: 'button', onclick: async () => {
+        if (!confirm('Close the fiscal year ending ' + fyEnd.value + '?')) return;
+        try { const r = await save('year.close', { fiscalYearEnd: fyEnd.value }, 'Year-end close'); toast('Year closed: net profit ' + rs(r.netProfitPaisa) + ' to retained earnings'); } catch (e) { toast(e.message, 'bad'); }
+      } }, 'Close the year')))));
     view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'System'), h('div', { class: 'actions' },
       h('button', { type: 'button', onclick: async () => { try { const r = await save('setup.run', {}, 'Run setup'); toast(Setup_summary(r)); } catch (e) { toast(e.message, 'bad'); } } }, 'Run setup (adds anything missing)'),
       h('button', { type: 'button', onclick: async () => { try { const r = await save('backup.now', {}, 'Backup'); toast('Backup saved: ' + r.name); } catch (e) { toast(e.message, 'bad'); } } }, 'Back up now'))));
@@ -2235,8 +2235,346 @@ const CONFIG = {
     }
   });
 
+
+  // ---------- reports (M7) ----------
+  function sourceLink(j) {
+    if (!j.docId) return null;
+    if (j.docType === 'INVOICE') return '#/receipts/INVOICE/' + j.docId;
+    if (j.docType === 'PAYMENT') return '#/receipts/PAYMENT/' + j.docId;
+    if (j.docType === 'SALE') return '#/receipts/SALE/' + j.docId;
+    if (j.docType === 'BILL' || j.docType === 'EXPENSE') return '#/purchases/bills/' + j.docId;
+    if (['STOCK_ISSUE', 'STOCK_RETURN', 'JOB_CANCELLATION'].includes(j.docType)) return '#/orders/' + j.docId;
+    if (j.docType === 'BATCH_COMPLETION') return '#/batches/' + j.docId;
+    return null;
+  }
+  function monthBounds(offset) {
+    const t = today();
+    const d = new Date(Date.UTC(Number(t.slice(0, 4)), Number(t.slice(5, 7)) - 1 + offset, 1));
+    const from = d.toISOString().slice(0, 10);
+    const to = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+    return { from, to };
+  }
+  function fiscalYearToDate() {
+    const fy = Number(state.settings.fiscalYearStartMonth || 7);
+    const t = today();
+    const y = Number(t.slice(5, 7)) >= fy ? Number(t.slice(0, 4)) : Number(t.slice(0, 4)) - 1;
+    return { from: y + '-' + String(fy).padStart(2, '0') + '-01', to: t };
+  }
+  // Date range bar with presets; calls onChange({from, to}) and keeps it in the URL.
+  function rangeBar(params, path, extra) {
+    const def = monthBounds(0);
+    const from = h('input', { type: 'date', value: params.get('from') || def.from, 'aria-label': 'From' });
+    const to = h('input', { type: 'date', value: params.get('to') || def.to, 'aria-label': 'To' });
+    const apply = (r) => { const q = new URLSearchParams(params); q.set('from', r.from); q.set('to', r.to); go('#' + path + '?' + q.toString()); };
+    const bar = h('div', { class: 'card noprint' }, h('div', { class: 'chips', style: 'margin-bottom:8px' },
+      h('button', { type: 'button', class: 'chip', onclick: () => apply(monthBounds(0)) }, 'This month'),
+      h('button', { type: 'button', class: 'chip', onclick: () => apply(monthBounds(-1)) }, 'Last month'),
+      h('button', { type: 'button', class: 'chip', onclick: () => apply(fiscalYearToDate()) }, 'Year to date'),
+      h('button', { type: 'button', class: 'chip', onclick: () => window.print() }, 'Print')),
+      h('div', { class: 'row' }, field('From', from), field('To', to), extra || null, h('div', { style: 'flex:0 0 auto;margin-bottom:12px' }, h('button', { type: 'button', class: 'primary', onclick: () => apply({ from: from.value, to: to.value }) }, 'Show'))));
+    return { bar, from: from.value, to: to.value };
+  }
+  function asOfBar(params, path) {
+    const d = h('input', { type: 'date', value: params.get('asOf') || today(), 'aria-label': 'As at' });
+    d.addEventListener('change', () => go('#' + path + '?asOf=' + d.value));
+    return { bar: h('div', { class: 'card noprint' }, h('div', { class: 'row' }, field('As at', d), h('div', { style: 'flex:0 0 auto;margin-bottom:12px' }, h('button', { type: 'button', onclick: () => window.print() }, 'Print')))), asOf: d.value };
+  }
+
+  const REPORTS = [
+    ['/reports/pnl', 'Profit & loss by brand', 'UMSHA, Mirae and shared costs, with allocation', 'reports.pnl'],
+    ['/reports/balance-sheet', 'Balance sheet', 'What the company owns and owes', 'reports.balanceSheet'],
+    ['/reports/trial-balance', 'Trial balance', 'Every account; debits must equal credits', 'reports.trialBalance'],
+    ['/reports/cash', 'Cash position', 'Bank and cash, advances held, what is due this week', 'reports.cashPosition'],
+    ['/reports/jobs', 'Profit by order', 'Delivered UMSHA orders: revenue, cost, margin', 'reports.jobProfitability'],
+    ['/reports/sku', 'Mirae margin by SKU', 'Units, revenue, cost and margin by SKU and collection', 'reports.skuMargin'],
+    ['/reports/ar', 'Customers owe', 'Unpaid invoices by age', 'reports.arAgeing'],
+    ['/reports/ap', 'We owe', 'Unpaid bills by age', 'reports.apAgeing'],
+    ['/reports/sales-tax', 'Sales tax', 'Output, input and payable for a period', 'reports.salesTax'],
+    ['/reports/wht', 'Withholding tax register', 'Tax deducted from vendors, for filing', 'reports.whtRegister'],
+    ['/reports/audit', 'Audit log', 'Who did what, when', 'reports.auditLog'],
+  ];
+  route('/reports', async (view) => {
+    view.appendChild(h('h1', {}, 'Reports'));
+    view.appendChild(h('div', { class: 'tiles' }, REPORTS.filter((r) => can(r[3])).map((r) => h('a', { class: 'tile', href: '#' + r[0], style: 'text-decoration:none;color:inherit' },
+      h('div', { style: 'font-family:var(--serif);font-size:19px;margin-bottom:4px' }, r[1]), h('div', { class: 'muted small' }, r[2])))));
+  });
+
+  route('/reports/pnl', async (view, args, params) => {
+    const allocate = params.get('allocate') || state.settings.allocationKey || 'NONE';
+    const compare = params.get('compare') === '1';
+    const rb = rangeBar(params, '/reports/pnl');
+    view.appendChild(h('h1', {}, 'Profit & loss'));
+    view.appendChild(rb.bar);
+    const setParam = (k, v) => { const q = new URLSearchParams(params); q.set('from', rb.from); q.set('to', rb.to); q.set(k, v); go('#/reports/pnl?' + q.toString()); };
+    view.appendChild(h('div', { class: 'chips noprint' }, h('span', { class: 'muted small', style: 'align-self:center' }, 'Shared costs: '),
+      [['NONE', 'Show separately'], ['REVENUE', 'Split by revenue'], ['FIXED', 'Split ' + (Number(state.settings.allocationUmshaPctBps || 0) / 100) + '% UMSHA']].map(([k, l]) => h('button', { type: 'button', class: 'chip' + (k === allocate ? ' on' : ''), onclick: () => setParam('allocate', k) }, l)),
+      h('button', { type: 'button', class: 'chip' + (compare ? ' on' : ''), onclick: () => setParam('compare', compare ? '0' : '1') }, 'Compare with previous period')));
+    const days = Math.round((Date.parse(rb.to) - Date.parse(rb.from)) / 86400000) + 1;
+    const prevTo = Dates.addDays(rb.from, -1);
+    const req = { from: rb.from, to: rb.to, allocate };
+    if (compare) req.compareTo = { from: Dates.addDays(prevTo, -(days - 1)), to: prevTo };
+    const r = await api('reports.pnl', req);
+    const cur = r.current;
+    const cols = allocate === 'NONE' ? ['UMSHA', 'MIRAE', 'SHARED', 'TOTAL'] : ['UMSHA', 'MIRAE', 'TOTAL'];
+    const prevTotals = {};
+    if (r.previous) Object.values(r.previous.sections).forEach((sec) => sec.rows.forEach((row) => { prevTotals[row.code] = row.amounts.TOTAL; }));
+    const table = h('table', { class: 'data' });
+    table.appendChild(h('thead', {}, h('tr', {}, h('th', {}, ''), cols.map((c) => h('th', { class: 'r' }, c === 'TOTAL' ? 'Total' : c === 'MIRAE' ? 'Mirae' : c === 'SHARED' ? 'Shared' : c)), r.previous ? h('th', { class: 'r' }, 'Previous') : null)));
+    const body = h('tbody');
+    const drill = (code, brand) => '#/ledger/' + code + '?from=' + rb.from + '&to=' + rb.to + (brand && brand !== 'TOTAL' ? '&brand=' + brand : '');
+    function sectionRows(key, title) {
+      const sec = cur.sections[key];
+      if (!sec.rows.length) return;
+      body.appendChild(h('tr', {}, h('td', { colspan: cols.length + 2, style: 'font-family:var(--serif);font-size:16px;padding-top:16px' }, title)));
+      sec.rows.forEach((row) => body.appendChild(h('tr', {}, h('td', { style: 'padding-left:18px' }, row.name),
+        cols.map((c) => h('td', { class: 'r' }, row.amounts[c] ? h('a', { href: drill(row.code, allocate === 'NONE' ? c : 'TOTAL') }, rsTable(row.amounts[c])) : '')),
+        r.previous ? h('td', { class: 'r muted' }, prevTotals[row.code] ? rsTable(prevTotals[row.code]) : '') : null)));
+      totalRow('Total ' + title.toLowerCase(), sec.total, r.previous ? r.previous.sections[key].total.TOTAL : null);
+    }
+    function totalRow(label, amounts, prev, strong) {
+      body.appendChild(h('tr', {}, h('td', { style: 'font-weight:600' + (strong ? ';font-size:16px' : '') }, label), cols.map((c) => h('td', { class: 'r', style: 'font-weight:600' }, rsTable(amounts[c] || 0))),
+        r.previous ? h('td', { class: 'r muted', style: 'font-weight:600' }, prev === null || prev === undefined ? '' : rsTable(prev)) : null));
+    }
+    const sm = cur.summary;
+    const ps = r.previous ? r.previous.summary : null;
+    sectionRows('revenue', 'Revenue');
+    sectionRows('cogs', 'Cost of sales');
+    totalRow('Gross profit', sm.grossProfit, ps ? ps.grossProfit.TOTAL : null, true);
+    body.appendChild(h('tr', {}, h('td', { class: 'muted' }, 'Gross margin'), cols.map((c) => h('td', { class: 'r muted' }, pct(sm.grossMarginBps[c]))), r.previous ? h('td', { class: 'r muted' }, pct(ps.grossMarginBps.TOTAL)) : null));
+    sectionRows('expenses', 'Operating expenses');
+    totalRow('Operating profit', sm.operatingProfit, ps ? ps.operatingProfit.TOTAL : null, true);
+    sectionRows('other', 'Other income and expense');
+    totalRow('Profit before tax', sm.profitBeforeTax, ps ? ps.profitBeforeTax.TOTAL : null, true);
+    sectionRows('tax', 'Tax');
+    totalRow('Net profit', sm.netProfit, ps ? ps.netProfit.TOTAL : null, true);
+    table.appendChild(body);
+    view.appendChild(h('div', { class: 'card' }, h('p', { class: 'muted small' }, fmtDate(rb.from) + ' to ' + fmtDate(rb.to) + (allocate !== 'NONE' ? ' · shared costs split ' + (allocate === 'REVENUE' ? 'by each brand\'s revenue' : 'by the fixed share') : '')),
+      cur.warnings.map((w) => h('div', { class: 'notice' }, w)), h('div', { class: 'tablewrap' }, table),
+      h('div', { class: 'actions noprint', style: 'margin-top:10px' }, h('button', { type: 'button', onclick: () => {
+        const rows = [];
+        Object.values(cur.sections).forEach((sec) => sec.rows.forEach((row) => rows.push([row.code, row.name, row.section].concat(cols.map((c) => Money.toRupeeString(row.amounts[c]))))));
+        const blob = new Blob([Csv.toCsv([['Code', 'Account', 'Section'].concat(cols)].concat(rows))], { type: 'text/csv' });
+        const a = h('a', { href: URL.createObjectURL(blob), download: 'pnl-' + rb.from + '-' + rb.to + '.csv' }); document.body.appendChild(a); a.click(); a.remove();
+      } }, 'Download CSV'))));
+  });
+
+  route('/ledger/:code', async (view, [code], params) => {
+    const r = await api('ledger.account', { accountCode: code, from: params.get('from') || '', to: params.get('to') || '', brand: params.get('brand') || '' });
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, r.account.code + ' ' + r.account.name), params.get('brand') ? brandPill(params.get('brand')) : null));
+    view.appendChild(h('p', { class: 'muted' }, (r.from ? fmtDate(r.from) : 'From the start') + ' to ' + (r.to ? fmtDate(r.to) : 'today') + ' · opening balance ' + rs(r.openingPaisa)));
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'date', label: 'Date', render: (l) => fmtDate(l.date), csv: (l) => l.date },
+      { key: 'jeId', label: 'Entry', render: (l) => (can('journal.get') ? h('a', { href: '#/je/' + l.jeId }, l.jeId) : l.jeId) },
+      { key: 'memo', label: 'For', opt: true, render: (l) => [l.contactId, l.jobId, l.itemId, l.memo].filter(Boolean).join(' · ') },
+      { key: 'brand', label: 'Brand', opt: true, render: (l) => brandPill(l.brand), csv: (l) => l.brand },
+      { key: 'debitPaisa', label: 'Debit', money: true }, { key: 'creditPaisa', label: 'Credit', money: true }, { key: 'balancePaisa', label: 'Balance', money: true },
+    ], r.rows, { csv: 'ledger-' + code, empty: 'No entries in this range.', foot: { date: 'Closing', balancePaisa: r.closingPaisa } })));
+  });
+
+  route('/reports/balance-sheet', async (view, args, params) => {
+    const ab = asOfBar(params, '/reports/balance-sheet');
+    view.appendChild(h('h1', {}, 'Balance sheet'));
+    view.appendChild(ab.bar);
+    const r = await api('reports.balanceSheet', { asOf: ab.asOf });
+    if (!r.balanced) view.appendChild(h('div', { class: 'notice bad' }, 'The balance sheet does not balance. Tell Finance.'));
+    const sec = (title, rows, total) => h('div', { class: 'card' }, h('h2', {}, title), dataTable([
+      { key: 'name', label: 'Account', render: (x) => (x.code ? h('a', { href: '#/ledger/' + x.code + '?to=' + ab.asOf }, x.code + ' ' + x.name) : x.name) },
+      { key: 'amountPaisa', label: 'Amount', money: true }], rows, { foot: { name: 'Total', amountPaisa: total } }));
+    view.appendChild(sec('Assets', r.assets, r.totals.assets));
+    view.appendChild(sec('Liabilities', r.liabilities, r.totals.liabilities));
+    view.appendChild(sec('Equity', r.equity, r.totals.equity));
+    view.appendChild(h('div', { class: 'card kv' }, h('span', { class: 'total' }, 'Liabilities + equity'), h('span', { class: 'v total' }, rs(r.totals.liabilities + r.totals.equity))));
+  });
+
+  route('/reports/trial-balance', async (view, args, params) => {
+    const ab = asOfBar(params, '/reports/trial-balance');
+    view.appendChild(h('h1', {}, 'Trial balance'));
+    view.appendChild(ab.bar);
+    const r = await api('reports.trialBalance', { asOf: ab.asOf });
+    view.appendChild(h('div', { class: 'notice ' + (r.balanced ? 'ok' : 'bad') }, r.balanced ? 'Debits equal credits.' : 'Debits and credits do not agree.'));
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'code', label: 'Account', render: (x) => h('a', { href: '#/ledger/' + x.code + '?to=' + ab.asOf }, x.code + ' ' + x.name), csv: (x) => x.code + ' ' + x.name },
+      { key: 'type', label: 'Type', opt: true }, { key: 'debitPaisa', label: 'Debit', money: true }, { key: 'creditPaisa', label: 'Credit', money: true },
+    ], r.rows, { csv: 'trial-balance-' + ab.asOf, foot: { code: 'Total', debitPaisa: r.totalDebitPaisa, creditPaisa: r.totalCreditPaisa } })));
+  });
+
+  route('/reports/cash', async (view, args, params) => {
+    const ab = asOfBar(params, '/reports/cash');
+    view.appendChild(h('h1', {}, 'Cash position'));
+    view.appendChild(ab.bar);
+    const r = await api('reports.cashPosition', { asOf: ab.asOf });
+    view.appendChild(h('div', { class: 'tiles' }, tile('Cash and bank', rs(r.cashPaisa)), tile('Customer advances held', rs(r.advancesHeldPaisa)),
+      tile('Customers owe (due by ' + fmtDate(r.until) + ')', rs(r.receivable.dueSoonPaisa + r.receivable.overduePaisa)), tile('We owe (due by ' + fmtDate(r.until) + ')', rs(r.payable.dueSoonPaisa + r.payable.overduePaisa))));
+    if (r.advancesHeldPaisa > r.cashPaisa) view.appendChild(h('div', { class: 'notice bad' }, 'Cash is less than the advances customers have paid for orders not yet delivered.'));
+    view.appendChild(h('div', { class: 'card' }, dataTable([{ key: 'name', label: 'Account', render: (a) => h('a', { href: '#/ledger/' + a.code + '?to=' + ab.asOf }, a.name) }, { key: 'balancePaisa', label: 'Balance', money: true }], r.accounts, { foot: { name: 'Total', balancePaisa: r.cashPaisa }, csv: 'cash-' + ab.asOf })));
+  });
+
+  route('/reports/jobs', async (view, args, params) => {
+    const rb = rangeBar(params, '/reports/jobs');
+    view.appendChild(h('h1', {}, 'Profit by order'));
+    view.appendChild(rb.bar);
+    const rows = await api('reports.jobProfitability', { from: rb.from, to: rb.to });
+    const tot = rows.reduce((t, x) => ({ revenuePaisa: t.revenuePaisa + x.revenuePaisa, costPaisa: t.costPaisa + x.costPaisa, marginPaisa: t.marginPaisa + x.marginPaisa }), { revenuePaisa: 0, costPaisa: 0, marginPaisa: 0 });
+    view.appendChild(h('div', { class: 'tiles' }, tile('Orders delivered', rows.length), tile('Average margin', tot.revenuePaisa ? pct(Math.round(tot.marginPaisa * 10000 / tot.revenuePaisa)) : 'n/a'),
+      tile('On time', rows.length ? Math.round(rows.filter((x) => x.onTime).length * 100 / rows.length) + '%' : 'n/a')));
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'jobId', label: 'Order', render: (x) => h('a', { href: '#/orders/' + x.jobId }, x.jobId), csv: (x) => x.jobId }, { key: 'contactName', label: 'Customer' },
+      { key: 'deliveredDate', label: 'Delivered', opt: true, render: (x) => fmtDate(x.deliveredDate) + (x.onTime ? '' : ' (late)'), csv: (x) => x.deliveredDate },
+      { key: 'revenuePaisa', label: 'Revenue', money: true }, { key: 'costPaisa', label: 'Cost', money: true }, { key: 'marginPaisa', label: 'Margin', money: true },
+      { key: 'marginBps', label: 'Margin %', num: true, render: (x) => pct(x.marginBps) },
+    ], rows.slice().sort((a, b) => (a.marginBps || 0) - (b.marginBps || 0)), { csv: 'profit-by-order', foot: Object.assign({ jobId: 'Total' }, tot), rowClass: (x) => (x.overBudget ? 'overdue' : '') })));
+  });
+
+  route('/reports/sku', async (view, args, params) => {
+    const rb = rangeBar(params, '/reports/sku');
+    view.appendChild(h('h1', {}, 'Mirae margin by SKU'));
+    view.appendChild(rb.bar);
+    const r = await api('reports.skuMargin', { from: rb.from, to: rb.to });
+    view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'By collection'), dataTable([{ key: 'collection', label: 'Collection', render: (c) => c.collection || '(none)' }, { key: 'netPaisa', label: 'Revenue', money: true }, { key: 'costPaisa', label: 'Cost', money: true }, { key: 'marginBps', label: 'Margin %', num: true, render: (c) => pct(c.marginBps) }], r.collections)));
+    view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'By SKU'), dataTable([
+      { key: 'name', label: 'SKU', render: (x) => h('a', { href: '#/inventory/items/' + x.itemId }, x.name), csv: (x) => x.itemId }, { key: 'units', label: 'Units', num: true },
+      { key: 'netPaisa', label: 'Revenue', money: true }, { key: 'costPaisa', label: 'Cost', money: true, opt: true }, { key: 'marginBps', label: 'Margin %', num: true, render: (x) => pct(x.marginBps) },
+    ], r.rows, { csv: 'sku-margin' })));
+  });
+
+  async function ageingPage(view, params, path, action, title, who) {
+    const ab = asOfBar(params, path);
+    view.appendChild(h('h1', {}, title));
+    view.appendChild(ab.bar);
+    const r = await api(action, { asOf: ab.asOf });
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'contactName', label: who }, { key: 'current', label: 'Not due', money: true }, { key: 'd1_30', label: '1–30 days', money: true },
+      { key: 'd31_60', label: '31–60', money: true, opt: true }, { key: 'd61_90', label: '61–90', money: true, opt: true }, { key: 'd90plus', label: '90+', money: true }, { key: 'total', label: 'Total', money: true },
+    ], r.rows, { foot: Object.assign({ contactName: 'Total' }, r.totals), csv: action, empty: 'Nothing outstanding.' })));
+  }
+  route('/reports/ar', (view, args, params) => ageingPage(view, params, '/reports/ar', 'reports.arAgeing', 'Customers owe', 'Customer'));
+  route('/reports/ap', (view, args, params) => ageingPage(view, params, '/reports/ap', 'reports.apAgeing', 'We owe', 'Vendor'));
+
+  route('/reports/sales-tax', async (view, args, params) => {
+    const rb = rangeBar(params, '/reports/sales-tax');
+    view.appendChild(h('h1', {}, 'Sales tax'));
+    view.appendChild(rb.bar);
+    const r = await api('reports.salesTax', { from: rb.from, to: rb.to });
+    view.appendChild(h('div', { class: 'card kv' }, h('span', {}, 'Output tax charged on sales'), h('span', { class: 'v' }, rs(r.outputPaisa)),
+      Object.keys(r.outputByBrand).map((b) => [h('span', { class: 'muted small', style: 'padding-left:16px' }, b === 'MIRAE' ? 'Mirae' : b), h('span', { class: 'v muted small' }, rs(r.outputByBrand[b]))]),
+      h('span', {}, 'Input tax claimed on purchases'), h('span', { class: 'v' }, '− ' + rs(r.inputPaisa)),
+      h('span', { class: 'total' }, r.netPayablePaisa >= 0 ? 'Payable for the period' : 'Refundable / carried forward'), h('span', { class: 'v total' }, rs(Math.abs(r.netPayablePaisa)))));
+    if (can('tax.settleSalesTax')) view.appendChild(h('button', { type: 'button', class: 'noprint', onclick: () => {
+      const box = h('div'); const date = h('input', { type: 'date', value: today() }); const bank = moneyAccountSelect('1100'); const ref = h('input', { placeholder: 'Return / CPR number' });
+      sheet('Record sales tax payment', h('div', {}, box, h('p', { class: 'muted small' }, 'After filing the return: clears output tax ' + rs(r.outputPaisa) + ' against input tax ' + rs(r.inputPaisa) + ' and records the payment.'), h('div', { class: 'row' }, field('Date paid', date), field('Paid from', bank)), field('Reference', ref)), (close) => [
+        h('button', { type: 'button', onclick: close }, 'Cancel'),
+        h('button', { type: 'button', class: 'primary', onclick: async (e) => { try { const x = await submitting(e.currentTarget, box, () => save('tax.settleSalesTax', { date: date.value, outputPaisa: r.outputPaisa, inputPaisa: r.inputPaisa, bankCode: bank.value, reference: ref.value }, 'Sales tax payment')); close(); if (x) toast('Recorded'); } catch (err) { /* shown */ } } }, 'Record'),
+      ]);
+    } }, 'Record payment of this return'));
+  });
+
+  route('/reports/wht', async (view, args, params) => {
+    const rb = rangeBar(params, '/reports/wht');
+    view.appendChild(h('h1', {}, 'Withholding tax register'));
+    view.appendChild(rb.bar);
+    const r = await api('reports.whtRegister', { from: rb.from, to: rb.to });
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'date', label: 'Date', render: (x) => fmtDate(x.date), csv: (x) => x.date }, { key: 'vendor', label: 'Vendor' }, { key: 'cnic', label: 'CNIC / NTN', opt: true, render: (x) => x.cnic || x.ntn },
+      { key: 'filerStatus', label: 'Filer', opt: true }, { key: 'whtTaxCodeId', label: 'Code', opt: true },
+      { key: 'grossPaisa', label: 'Amount settled', money: true }, { key: 'whtPaisa', label: 'Tax deducted', money: true },
+      { key: 'paymentId', label: 'Payment', opt: true, render: (x) => h('a', { href: '#/receipts/PAYMENT/' + x.paymentId }, x.paymentId), csv: (x) => x.paymentId },
+    ], r.rows, { csv: 'wht-register', foot: { date: 'Total', whtPaisa: r.totalWhtPaisa }, empty: 'No tax withheld in this period.' })));
+    if (can('tax.depositWht') && r.totalWhtPaisa) view.appendChild(h('button', { type: 'button', class: 'noprint', onclick: () => {
+      const box = h('div'); const amt = moneyInput({ label: 'Amount', value: r.totalWhtPaisa }); const date = h('input', { type: 'date', value: today() }); const bank = moneyAccountSelect('1100'); const ref = h('input', { placeholder: 'CPR number' });
+      sheet('Record WHT deposit', h('div', {}, box, field('Amount deposited', amt), h('div', { class: 'row' }, field('Date', date), field('From', bank)), field('Reference', ref)), (close) => [
+        h('button', { type: 'button', onclick: close }, 'Cancel'),
+        h('button', { type: 'button', class: 'primary', onclick: async (e) => { try { const x = await submitting(e.currentTarget, box, () => save('tax.depositWht', { date: date.value, amountPaisa: amt.value(), bankCode: bank.value, reference: ref.value }, 'WHT deposit')); close(); if (x) toast('Recorded'); } catch (err) { /* shown */ } } }, 'Record'),
+      ]);
+    } }, 'Record deposit with the tax office'));
+  });
+
+  route('/reports/audit', async (view, args, params) => {
+    const rb = rangeBar(params, '/reports/audit');
+    view.appendChild(h('h1', {}, 'Audit log'));
+    view.appendChild(rb.bar);
+    const rows = await api('reports.auditLog', { from: rb.from, to: rb.to, q: params.get('q') || '' });
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'ts', label: 'When', render: (a) => String(a.ts).replace('T', ' ').slice(0, 16) }, { key: 'userEmail', label: 'Who' },
+      { key: 'summary', label: 'What' }, { key: 'docId', label: 'Document', opt: true },
+    ], rows, { csv: 'audit-log', empty: 'Nothing in this period.' })));
+  });
+
+  // ---------- journals ----------
+  route('/journals', async (view, args, params) => {
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Journals'), can('journal.create') ? h('a', { class: 'btn primary', href: '#/journals/new' }, 'New journal') : null));
+    const rb = rangeBar(params, '/journals');
+    view.appendChild(rb.bar);
+    const manual = params.get('manual') === '1';
+    view.appendChild(h('div', { class: 'chips' }, h('button', { type: 'button', class: 'chip' + (manual ? '' : ' on'), onclick: () => go('#/journals?from=' + rb.from + '&to=' + rb.to) }, 'All'),
+      h('button', { type: 'button', class: 'chip' + (manual ? ' on' : ''), onclick: () => go('#/journals?from=' + rb.from + '&to=' + rb.to + '&manual=1') }, 'Manual only')));
+    const rows = await api('journal.list', { from: rb.from, to: rb.to, manualOnly: manual });
+    view.appendChild(h('div', { class: 'card' }, dataTable([
+      { key: 'id', label: 'Entry' }, { key: 'date', label: 'Date', render: (j) => fmtDate(j.date), csv: (j) => j.date },
+      { key: 'docType', label: 'From', render: (j) => (DOC_LABEL[j.docType] || j.docType) + ' ' + j.docId },
+      { key: 'memo', label: 'Memo', opt: true }, { key: 'totalPaisa', label: 'Amount', money: true },
+      { key: 'st', label: '', render: (j) => (j.reversedByJeId ? statusPill('VOID') : j.reversesJeId ? 'reversal' : ''), csv: (j) => (j.reversedByJeId ? 'reversed' : '') },
+    ], rows, { onRow: (j) => go('#/je/' + j.id), csv: 'journals', empty: 'No entries in this range.' })));
+  });
+
+  route('/journals/new', async (view) => {
+    view.appendChild(h('h1', {}, 'Manual journal'));
+    const box = h('div');
+    const date = h('input', { type: 'date', value: today() });
+    const memo = h('input', { placeholder: 'What is this journal for?' });
+    const opening = h('input', { type: 'checkbox', style: 'width:22px;min-height:22px', 'aria-label': 'Opening balances' });
+    const accounts = state.accounts.filter((a) => !['INV_FABRIC', 'INV_TRIMS', 'INV_PACKAGING', 'INV_FG'].includes(a.systemKey));
+    const rows = [];
+    const grid = h('div');
+    const bal = h('div', { class: 'kv' });
+    function addRow() {
+      const acct = h('select', { 'aria-label': 'Account' }, h('option', { value: '' }, 'Account…'), accounts.map((a) => h('option', { value: a.code }, a.code + ' ' + a.name)));
+      const brand = brandSelect('SHARED');
+      acct.addEventListener('change', () => { const a = state.accountsByCode[acct.value]; if (a) brand.value = a.defaultBrand || 'SHARED'; });
+      const dr = moneyInput({ label: 'Debit', placeholder: 'Debit', onChange: update });
+      const cr = moneyInput({ label: 'Credit', placeholder: 'Credit', onChange: update });
+      const contact = h('input', { placeholder: 'Contact / job ID (if needed)', 'aria-label': 'Reference' });
+      const row = { acct, brand, dr, cr, contact };
+      rows.push(row);
+      grid.appendChild(h('div', { class: 'card', style: 'background:var(--bg);padding:12px' }, h('div', { class: 'row' }, field('Account', acct), field('Brand', brand)), h('div', { class: 'row' }, field('Debit', dr), field('Credit', cr), field('Contact or job', contact))));
+    }
+    function totals() { let d = 0; let c = 0; rows.forEach((r) => { try { d += r.dr.value() || 0; c += r.cr.value() || 0; } catch (e) { /* invalid */ } }); return { d, c }; }
+    function update() { const t = totals(); clear(bal).append(h('span', {}, 'Debits'), h('span', { class: 'v' }, rs(t.d)), h('span', {}, 'Credits'), h('span', { class: 'v' }, rs(t.c)), h('span', { class: 'total' }, t.d === t.c ? 'Balanced' : 'Out by'), h('span', { class: 'v total' + (t.d === t.c ? '' : ' bad-text') }, rs(Math.abs(t.d - t.c)))); }
+    addRow(); addRow(); update();
+    const submit = h('button', { type: 'button', class: 'primary' }, 'Post journal');
+    view.appendChild(h('div', { class: 'card' }, box, h('div', { class: 'row' }, field('Date', date), field('Memo', memo)),
+      h('label', { style: 'display:flex;gap:10px;align-items:center;margin-bottom:12px' }, opening, h('span', {}, 'Opening balances at go-live')),
+      h('p', { class: 'muted small' }, 'Stock accounts are not offered: stock changes only through purchases, issues and counts. Lines on customer, vendor or job accounts need the contact or job ID.'),
+      grid, h('button', { type: 'button', class: 'ghost', onclick: addRow }, '+ Another line'), bal, h('div', { class: 'actions', style: 'margin-top:12px' }, submit)));
+    submit.addEventListener('click', async () => {
+      try {
+        const lines = rows.filter((r) => r.acct.value).map((r) => {
+          const ref = r.contact.value.trim().toUpperCase();
+          return { accountCode: r.acct.value, brand: r.brand.value, debitPaisa: r.dr.value() || 0, creditPaisa: r.cr.value() || 0, contactId: /^JOB-/.test(ref) ? '' : ref, jobId: /^JOB-/.test(ref) ? ref : '' };
+        });
+        const r = await submitting(submit, box, () => save('journal.create', { date: date.value, memo: memo.value, docType: opening.checked ? 'OPENING' : '', lines }, 'Journal ' + memo.value));
+        if (r) { toast('Posted ' + r.jeId); go('#/je/' + r.jeId); }
+      } catch (e) { box.scrollIntoView(); }
+    });
+  });
+
+  async function closeMonthSheet(m) {
+    const list = await api('periods.checklist', { periodId: m });
+    const box = h('div');
+    const ack = h('input', { type: 'checkbox', style: 'width:22px;min-height:22px', 'aria-label': 'I have checked the warnings' });
+    const failing = list.checks.filter((c) => !c.ok);
+    sheet('Close ' + m, h('div', {}, box, h('ul', { class: 'timeline' }, list.checks.map((c) => h('li', {}, h('span', { class: 'when', style: 'width:28px;color:' + (c.ok ? 'var(--ok)' : c.blocking ? 'var(--bad)' : 'var(--warn)') }, c.ok ? '✓' : c.blocking ? '✕' : '!'),
+      h('span', { class: 'what' }, c.label, c.detail ? h('div', { class: 'muted small' }, c.detail) : null)))),
+      !list.canClose ? h('div', { class: 'notice bad' }, 'Fix the items marked ✕ before closing.') : failing.length ? h('label', { style: 'display:flex;gap:10px;align-items:center;margin-top:12px' }, ack, h('span', {}, 'I have checked the items marked ! and want to close anyway')) : null,
+      h('p', { class: 'muted small' }, 'Once closed, nothing dated in ' + m + ' can be posted until an Owner reopens it with a reason.')), (close) => [
+      h('button', { type: 'button', onclick: close }, 'Cancel'),
+      h('button', { type: 'button', class: 'primary', disabled: !list.canClose, onclick: async (e) => {
+        try { const r = await submitting(e.currentTarget, box, () => save('periods.close', { periodId: m, acknowledgeWarnings: ack.checked }, 'Close ' + m)); close(); if (r) { toast(m + ' closed'); render(); } } catch (err) { /* shown */ }
+      } }, 'Close ' + m),
+    ]);
+  }
+
   // ---------- modules not built yet ----------
-  const SOON = { banking: ['Banking', 'M8'], reports: ['Reports', 'M7'] };
+  const SOON = { banking: ['Banking', 'M8'] };
   route('/soon/:what', async (view, [what]) => {
     const s = SOON[what] || [what, 'a later milestone'];
     view.appendChild(h('h1', {}, s[0]));

@@ -358,6 +358,58 @@ async function noHorizontalScroll(page) {
     await fp6.waitForSelector('.tile:has-text("Card & wallet not yet in bank") >> text=Rs 0');
     await shot(fp6, 'store');
 
+    // ---- M7: Owner reads the P&L, drills down, posts a journal, closes a month ----
+    const op = (await signInAs(browser, base, 'Umar', { width: 1280, height: 900 })).page;
+    await op.goto(base + '#/reports');
+    await op.getByRole('link', { name: /Profit & loss by brand/ }).click();
+    await op.waitForSelector('text=Gross profit');
+    await op.getByRole('button', { name: 'Split by revenue' }).click();
+    await op.waitForSelector('text=shared costs split by each brand');
+    await shot(op, 'pnl');
+    assert.equal(await op.locator('th', { hasText: 'Shared' }).count(), 0, 'allocated view has no Shared column');
+    await op.getByRole('button', { name: 'Show separately' }).click();
+    await op.waitForSelector('th:has-text("Shared")');
+    const revenueCell = op.locator('tr', { hasText: 'RTW sales - store' }).locator('a').first();
+    await revenueCell.click();
+    await op.waitForSelector('h1:has-text("4100 RTW sales - store")');
+    await shot(op, 'ledger-drilldown');
+    await op.locator('table.data a', { hasText: 'JE-' }).first().click();
+    await op.waitForSelector('h1:has-text("Journal entry")');
+    await op.locator('p.muted a', { hasText: 'SALE-' }).first().click();
+    await op.waitForSelector('text=Sale receipt');
+
+    await op.goto(base + '#/reports/trial-balance');
+    await op.waitForSelector('text=Debits equal credits.');
+    await op.goto(base + '#/journals/new');
+    await op.getByPlaceholder('What is this journal for?').fill('Audit fee accrual');
+    await op.locator('select[aria-label=Account]').nth(0).selectOption('6300');
+    await op.locator('input[aria-label=Debit]').nth(0).fill('25000');
+    await op.locator('select[aria-label=Account]').nth(1).selectOption('2300');
+    await op.locator('input[aria-label=Credit]').nth(1).fill('24000');
+    await op.waitForSelector('text=Out by');
+    await op.locator('input[aria-label=Credit]').nth(1).fill('25000');
+    await op.waitForSelector('text=Balanced');
+    await op.getByRole('button', { name: 'Post journal' }).click();
+    await op.waitForSelector('h1:has-text("Journal entry")');
+    await op.waitForSelector('text=6300 Professional fees');
+
+    const lastMonth = new Date(Date.UTC(2026, 8, 1)).toISOString().slice(0, 7); // 2026-09, nothing posted
+    await op.goto(base + '#/settings');
+    await op.locator('.kv', { hasText: lastMonth }).getByRole('button', { name: 'Close' }).click();
+    const cm = op.getByRole('dialog', { name: 'Close ' + lastMonth });
+    await cm.getByText('Trial balance balances').waitFor();
+    await shot(op, 'close-month');
+    await cm.getByRole('checkbox').check();
+    await cm.getByRole('button', { name: 'Close ' + lastMonth }).click();
+    await cm.waitFor({ state: 'detached' });
+    assert.equal(gas.rows('Periods').find((x) => x.id === lastMonth).status, 'CLOSED');
+
+    await op.goto(base + '#/reports/sales-tax');
+    await op.waitForSelector('text=Output tax charged on sales');
+    await op.goto(base + '#/reports/cash');
+    await op.waitForSelector('text=Cash and bank');
+    await shot(op, 'cash-position');
+
     console.log('ok - UI: book, advance, karigar, deliver, balance, receipts and journals (' + (SHOTS ? 'screenshots in ' + SHOTS : 'no screenshots') + ')');
   } catch (e) {
     console.error('not ok - UI test failed:', e.message);

@@ -164,8 +164,9 @@ describe('T14 locked period', () => {
   test('posting into a closed month fails; reopening with a reason allows it; both are audited', () => {
     const { gas, users } = createSystem();
     const { jobId } = withOrder(gas, users);
-    assert.ok(gas.call(users.owner, 'periods.close', { periodId: '2026-09' }).ok);
-    assert.equal(gas.call(users.owner, 'periods.close', { periodId: '2026-09' }).code, 'E_VALIDATION');
+    assert.equal(gas.call(users.owner, 'periods.close', { periodId: '2026-09' }).field, 'acknowledgeWarnings');
+    assert.ok(gas.call(users.owner, 'periods.close', { periodId: '2026-09', acknowledgeWarnings: true }).ok);
+    assert.equal(gas.call(users.owner, 'periods.close', { periodId: '2026-09', acknowledgeWarnings: true }).code, 'E_VALIDATION');
     const advance = { jobId, date: '2026-09-15', amountPaisa: rs(1000), moneyAccountCode: '1100' };
     assert.equal(gas.call(users.studio, 'payments.receiveAdvance', advance).code, 'E_PERIOD_LOCKED');
     assert.equal(gas.call(users.finance, 'journal.create', { date: '2026-09-15', memo: 'x', lines: [{ accountCode: '6300', brand: 'SHARED', debitPaisa: 1 }, { accountCode: '1100', brand: 'SHARED', creditPaisa: 1 }] }).code, 'E_PERIOD_LOCKED');
@@ -174,7 +175,8 @@ describe('T14 locked period', () => {
     assert.ok(gas.call(users.owner, 'periods.reopen', { periodId: '2026-09', reason: 'Missed a deposit' }).ok);
     assert.ok(gas.call(users.studio, 'payments.receiveAdvance', advance).ok);
     const audit = gas.rows('AuditLog').filter((a) => a.docType === 'PERIOD').map((a) => a.summary);
-    assert.deepEqual(audit, ['Closed 2026-09', 'Reopened 2026-09: Missed a deposit']);
+    assert.match(audit[0], /^Closed 2026-09 \(acknowledged: /);
+    assert.equal(audit[1], 'Reopened 2026-09: Missed a deposit');
     assert.equal(gas.rows('Periods')[0].reopenReason, 'Missed a deposit');
   });
 });

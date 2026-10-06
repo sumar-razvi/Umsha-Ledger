@@ -288,16 +288,42 @@ var Actions = {
     return Db.read('Periods').slice().sort(function (a, b) { return a.id < b.id ? 1 : -1; });
   },
 
-  // TODO(M7): the close checklist (bank reconciled, cash-ups, stock count, TB balances).
+  'periods.checklist': function (p) {
+    Dates.periodBounds(p.periodId);
+    return Reports.closeChecklist(p.periodId, {
+      lines: Db.read('JournalLines'), stockMoves: Db.read('StockMoves'), acc: Validate.indexAccounts(Db.read('Accounts')), items: Db.byKey('Items'),
+      sales: Db.read('Sales'), cashUps: Db.read('CashUps'), stockCounts: Db.read('StockCounts'), periods: Db.read('Periods'), bankRecs: Db.read('BankRecs'),
+    });
+  },
+
   // TODO(decision-D-11): any Owner can close and reopen.
   'periods.close': function (p, env) {
     var b = Dates.periodBounds(p.periodId);
     var row = Db.get('Periods', b.id);
     if (row && row.status === 'CLOSED') throw Validate.coreError('E_VALIDATION', b.id + ' is already closed', 'periodId');
+    var list = Actions['periods.checklist']({ periodId: b.id });
+    var failing = list.checks.filter(function (c) { return !c.ok; });
+    if (!list.canClose) {
+      throw Validate.coreError('E_VALIDATION', 'Cannot close ' + b.id + ': ' + failing.filter(function (c) { return c.blocking; }).map(function (c) { return c.label + (c.detail ? ' (' + c.detail + ')' : ''); }).join('; '), 'periodId');
+    }
+    if (failing.length && !p.acknowledgeWarnings) {
+      throw Validate.coreError('E_VALIDATION', 'Before closing ' + b.id + ', confirm these: ' + failing.map(function (c) { return c.label; }).join('; '), 'acknowledgeWarnings');
+    }
     var fields = { status: 'CLOSED', closedBy: env.user.email, closedAt: env.ts, reopenReason: '' };
     if (row) env.tx.update('Periods', b.id, fields);
     else env.tx.append('Periods', [Object.assign({}, b, fields)]);
-    return { data: Object.assign({}, b, fields), audit: { docType: 'PERIOD', docId: b.id, summary: 'Closed ' + b.id, before: row ? row.status : 'OPEN', after: 'CLOSED' } };
+    return {
+      data: Object.assign({}, b, fields, { warnings: failing.map(function (c) { return c.label; }) }),
+      audit: { docType: 'PERIOD', docId: b.id, summary: 'Closed ' + b.id + (failing.length ? ' (acknowledged: ' + failing.map(function (c) { return c.label; }).join('; ') + ')' : ''), before: row ? row.status : 'OPEN', after: 'CLOSED' },
+    };
+  },
+
+  // R23: close the fiscal year's P&L into retained earnings.
+  'year.close': function (p, env) {
+    var ctx = loadCtx_({});
+    var entry = Posting.closeYear({ date: need_(p.fiscalYearEnd, 'fiscalYearEnd', 'Enter the last day of the fiscal year'), lines: linesWithClosing_() }, ctx);
+    var ids = postEntry_(env, entry);
+    return { data: Object.assign({ jeId: ids.jeId }, entry.doc), audit: { docType: 'JOURNAL', docId: ids.jeId, summary: 'Year-end close to ' + p.fiscalYearEnd + ': net profit ' + Money.formatPaisa(entry.doc.netProfitPaisa) } };
   },
 
   'periods.reopen': function (p, env) {
@@ -1040,6 +1066,97 @@ var Actions = {
     var ids = postEntry_(env, entry);
     persistPayment_(env, Object.assign({}, entry.doc, { brand: 'SHARED' }), ids.jeId, 'Transfer to ' + entry.doc.toAccountCode + (p.memo ? ': ' + p.memo : ''));
     return { data: { paymentId: docId, jeId: ids.jeId }, audit: { docType: 'PAYMENT', docId: docId, summary: 'Transfer ' + Money.formatPaisa(entry.doc.amountPaisa) + ' ' + entry.doc.moneyAccountCode + ' to ' + entry.doc.toAccountCode } };
+  },
+
+  // ---------- reports (M7) ----------
+
+  'reports.pnl': function (p) {
+    var settings = Db.settings();
+    var acc = Validate.indexAccounts(Db.read('Accounts'));
+    var lines = linesWithClosing_();
+    var opts = { from: need_(p.from, 'from', 'Choose a start date'), to: need_(p.to, 'to', 'Choose an end date'), allocate: p.allocate || settings.allocationKey || 'NONE', umshaPctBps: Number(settings.allocationUmshaPctBps || 0) };
+    var out = { current: Reports.profitAndLoss(lines, acc, opts) };
+    if (p.compareTo && p.compareTo.from && p.compareTo.to) out.previous = Reports.profitAndLoss(lines, acc, Object.assign({}, opts, { from: p.compareTo.from, to: p.compareTo.to }));
+    return out;
+  },
+
+  'reports.balanceSheet': function (p) {
+    return Reports.balanceSheet(Db.read('JournalLines'), Validate.indexAccounts(Db.read('Accounts')), { asOf: p.asOf || Dates.karachiDate() });
+  },
+
+  'reports.trialBalance': function (p) {
+    return Reports.trialBalance(Db.read('JournalLines'), Validate.indexAccounts(Db.read('Accounts')), { asOf: p.asOf || Dates.karachiDate() });
+  },
+
+  'reports.jobProfitability': function (p) {
+    var rows = Reports.jobProfitability(linesWithClosing_(), Validate.indexAccounts(Db.read('Accounts')), Db.byKey('Jobs'), { from: p.from, to: p.to });
+    var contacts = Db.byKey('Contacts');
+    var jobs = Db.byKey('Jobs');
+    return rows.map(function (r) {
+      var j = jobs[r.jobId];
+      var cost = r.costPaisa;
+      return Object.assign({}, r, { contactName: (contacts[r.contactId] || {}).name || '', budgetCostPaisa: j.budgetCostPaisa, promisedDate: j.promisedDate, onTime: !j.promisedDate || r.deliveredDate <= j.promisedDate, overBudget: !!j.budgetCostPaisa && cost > j.budgetCostPaisa });
+    });
+  },
+
+  'reports.skuMargin': function (p) {
+    return Reports.skuMargin(Db.read('Sales'), Db.read('SaleLines'), Db.byKey('Items'), { from: p.from, to: p.to, collection: p.collection });
+  },
+
+  'reports.cashPosition': function (p) {
+    return Reports.cashPosition(Db.read('JournalLines'), Validate.indexAccounts(Db.read('Accounts')), Db.read('Invoices'), Db.read('Bills'), { asOf: p.asOf || Dates.karachiDate(), days: Number(p.days) || 7 });
+  },
+
+  'reports.salesTax': function (p) {
+    var settlements = {};
+    Db.read('Payments').forEach(function (x) { if (x.kind === 'TAX_PAYMENT' && x.jeId) settlements[x.jeId] = true; });
+    return Reports.salesTaxSummary(Db.read('JournalLines'), Validate.indexAccounts(Db.read('Accounts')), { from: p.from, to: p.to, excludeJeIds: settlements });
+  },
+
+  'reports.whtRegister': function (p) {
+    return Reports.whtRegister(Db.read('Payments'), Db.read('PaymentAllocations'), Db.byKey('Contacts'), { from: p.from, to: p.to });
+  },
+
+  'reports.auditLog': function (p) {
+    return Db.read('AuditLog').filter(function (a) {
+      var d = String(a.ts).slice(0, 10);
+      return (!p.from || d >= p.from) && (!p.to || d <= p.to) && (!p.user || a.userEmail === p.user) && (!p.docType || a.docType === p.docType) &&
+        (!p.q || (a.summary + ' ' + a.docId).toLowerCase().indexOf(String(p.q).toLowerCase()) >= 0);
+    }).slice(-Math.min(Number(p.limit) || 500, 2000)).reverse();
+  },
+
+  'journal.list': function (p) {
+    var totals = {};
+    var hits = {};
+    Db.read('JournalLines').forEach(function (l) {
+      totals[l.jeId] = (totals[l.jeId] || 0) + l.debitPaisa;
+      if (p.accountCode && l.accountCode === String(p.accountCode)) hits[l.jeId] = true;
+    });
+    return Db.read('Journal').filter(function (j) {
+      return (!p.from || j.date >= p.from) && (!p.to || j.date <= p.to) && (!p.docType || j.docType === p.docType) &&
+        (!p.accountCode || hits[j.id]) && (!p.manualOnly || j.isManual) &&
+        (!p.q || (j.id + ' ' + j.docId + ' ' + j.memo).toLowerCase().indexOf(String(p.q).toLowerCase()) >= 0);
+    }).map(function (j) { return Object.assign({}, j, { totalPaisa: totals[j.id] || 0 }); }).slice(-Math.min(Number(p.limit) || 300, 2000)).reverse();
+  },
+
+  'tax.settleSalesTax': function (p, env) {
+    var ctx = loadCtx_({});
+    var date = need_(p.date, 'date', 'Enter the date');
+    var docId = env.tx.nextDocId('PAY', date);
+    var entry = Posting.settleSalesTax(Object.assign({}, p, { docId: docId }), ctx);
+    var ids = postEntry_(env, entry);
+    persistPayment_(env, Object.assign({}, entry.doc, { brand: 'SHARED' }), ids.jeId, 'Sales tax return' + (p.reference ? ' ' + p.reference : ''));
+    return { data: { paymentId: docId, jeId: ids.jeId }, audit: { docType: 'PAYMENT', docId: docId, summary: 'Sales tax paid ' + Money.formatPaisa(entry.doc.amountPaisa) } };
+  },
+
+  'tax.depositWht': function (p, env) {
+    var ctx = loadCtx_({});
+    var date = need_(p.date, 'date', 'Enter the date');
+    var docId = env.tx.nextDocId('PAY', date);
+    var entry = Posting.depositWht(Object.assign({}, p, { docId: docId }), ctx);
+    var ids = postEntry_(env, entry);
+    persistPayment_(env, Object.assign({}, entry.doc, { brand: 'SHARED' }), ids.jeId, 'WHT deposit' + (p.reference ? ' ' + p.reference : ''));
+    return { data: { paymentId: docId, jeId: ids.jeId }, audit: { docType: 'PAYMENT', docId: docId, summary: 'WHT deposited ' + Money.formatPaisa(entry.doc.amountPaisa) } };
   },
 
   // ---------- ledger ----------

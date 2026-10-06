@@ -1287,6 +1287,8 @@ const MATRIX = {
   'periods.list': ['OFV', false],
   'periods.close': ['O', true],
   'periods.reopen': ['O', true],
+  'periods.checklist': ['OF', false],
+  'year.close': ['O', true],
 
   'contacts.search': ['OFST', false],
   'contacts.get': ['OFST', false],
@@ -3288,6 +3290,150 @@ function inventoryReconciliation(lines, stockMoves, acc, items, opts) {
   return { asOf: o.asOf || '', rows: rows, items: val.rows, reconciled: rows.every(function (r) { return r.differencePaisa === 0; }) };
 }
 
+// ---------- Mirae SKU and collection margin (M8.5) ----------
+
+// sales: Sales rows; saleLines: SaleLines rows (returns negative);
+// items: {itemId: Items row}. opts: {from, to, collection}.
+function skuMargin(sales, saleLines, items, opts) {
+  const o = opts || {};
+  const inRangeSale = {};
+  sales.forEach(function (x) { if (x.status !== 'VOID' && inRange(x.date, o)) inRangeSale[x.id] = x; });
+  const bySku = {};
+  saleLines.forEach(function (l) {
+    if (!inRangeSale[l.saleId]) return;
+    const it = items[l.itemId] || {};
+    if (o.collection && it.collection !== o.collection) return;
+    const r = bySku[l.itemId] || (bySku[l.itemId] = { itemId: l.itemId, name: it.name || l.itemId, collection: it.collection || '', unitsMilli: 0, netPaisa: 0, costPaisa: 0 });
+    r.unitsMilli += Inventory.toMilli(l.qty);
+    r.netPaisa += l.netPaisa || 0;
+    r.costPaisa += l.costPaisa || 0;
+  });
+  const rows = Object.keys(bySku).sort().map(function (k) {
+    const r = bySku[k];
+    const margin = r.netPaisa - r.costPaisa;
+    return { itemId: r.itemId, name: r.name, collection: r.collection, units: Inventory.fromMilli(r.unitsMilli), netPaisa: r.netPaisa, costPaisa: r.costPaisa, marginPaisa: margin,
+      marginBps: r.netPaisa > 0 ? Money.divRoundHalfEven(BigInt(margin) * 10000n, r.netPaisa) : null };
+  });
+  const byCollection = {};
+  rows.forEach(function (r) {
+    const c = byCollection[r.collection] || (byCollection[r.collection] = { collection: r.collection, netPaisa: 0, costPaisa: 0 });
+    c.netPaisa += r.netPaisa; c.costPaisa += r.costPaisa;
+  });
+  return {
+    rows: rows,
+    collections: Object.keys(byCollection).sort().map(function (k) {
+      const c = byCollection[k];
+      const m = c.netPaisa - c.costPaisa;
+      return { collection: c.collection, netPaisa: c.netPaisa, costPaisa: c.costPaisa, marginPaisa: m, marginBps: c.netPaisa > 0 ? Money.divRoundHalfEven(BigInt(m) * 10000n, c.netPaisa) : null };
+    }),
+  };
+}
+
+// ---------- Cash position (M8.6) ----------
+
+// Money account balances, advances held, and what is due in/out within `days`.
+// invoices / bills: open documents with dueDate and balancePaisa.
+function cashPosition(lines, acc, invoices, bills, opts) {
+  const o = opts || {};
+  const asOf = Validate.checkDate(o.asOf, 'asOf');
+  const horizon = (function () {
+    const d = new Date(Date.UTC(Number(asOf.slice(0, 4)), Number(asOf.slice(5, 7)) - 1, Number(asOf.slice(8, 10)) + (o.days || 7)));
+    return d.toISOString().slice(0, 10);
+  })();
+  const bal = accountBalances(lines, { asOf: asOf });
+  const accounts = Object.keys(acc.accountsByCode).map(function (c) { return acc.accountsByCode[c]; })
+    .filter(function (a) { return a.isMoney && a.systemKey !== 'STORE_CREDIT' && a.isActive; })
+    .map(function (a) { return { code: a.code, name: a.name, moneyKind: a.moneyKind, balancePaisa: bal[a.code] || 0 }; });
+  function due(docs) {
+    const open = docs.filter(function (d) { return d.status !== 'VOID' && d.balancePaisa > 0 && d.date <= asOf; });
+    return {
+      overduePaisa: open.filter(function (d) { return (d.dueDate || d.date) < asOf; }).reduce(function (t, d) { return t + d.balancePaisa; }, 0),
+      dueSoonPaisa: open.filter(function (d) { const dd = d.dueDate || d.date; return dd >= asOf && dd <= horizon; }).reduce(function (t, d) { return t + d.balancePaisa; }, 0),
+      totalPaisa: open.reduce(function (t, d) { return t + d.balancePaisa; }, 0),
+    };
+  }
+  const advCode = codeFor(acc, 'CUSTOMER_ADV');
+  return {
+    asOf: asOf, until: horizon, accounts: accounts,
+    cashPaisa: accounts.reduce(function (t, a) { return t + a.balancePaisa; }, 0),
+    advancesHeldPaisa: advCode && bal[advCode] ? -bal[advCode] : 0,
+    receivable: due(invoices), payable: due(bills),
+  };
+}
+
+// ---------- Tax (M7.3, M7.4) ----------
+
+// Sales tax for a period from the ledger: output tax charged, input tax
+// claimed, net payable. Entries in excludeJeIds (the settlements themselves)
+// are left out so a settled period still shows what arose in it.
+function salesTaxSummary(lines, acc, opts) {
+  const o = opts || {};
+  const out = codeFor(acc, 'OUTPUT_TAX');
+  const inp = codeFor(acc, 'INPUT_TAX');
+  const skip = o.excludeJeIds || {};
+  let output = 0;
+  let input = 0;
+  const byBrand = {};
+  lines.forEach(function (l) {
+    if (!inRange(l.date, o) || skip[l.jeId]) return;
+    if (l.accountCode === out) { output -= net(l); byBrand[l.brand] = (byBrand[l.brand] || 0) - net(l); }
+    if (l.accountCode === inp) input += net(l);
+  });
+  return { from: o.from || '', to: o.to || '', outputPaisa: output, inputPaisa: input, netPayablePaisa: output - input, outputByBrand: byBrand };
+}
+
+// Withholding tax deducted, payment by payment, for the accountant's filing.
+// payments: Payments rows; allocations: PaymentAllocations rows; contacts: {id: row}.
+function whtRegister(payments, allocations, contacts, opts) {
+  const o = opts || {};
+  const byPayment = {};
+  allocations.forEach(function (a) { (byPayment[a.paymentId] = byPayment[a.paymentId] || []).push(a); });
+  const rows = [];
+  payments.forEach(function (p) {
+    if (p.status === 'VOID' || !p.whtPaisa || !inRange(p.date, o)) return;
+    const v = contacts[p.contactId] || {};
+    const settled = (byPayment[p.id] || []).reduce(function (t, a) { return t + (a.amountPaisa || 0); }, 0);
+    rows.push({ date: p.date, paymentId: p.id, contactId: p.contactId, vendor: v.name || '', cnic: v.cnic || '', ntn: v.ntn || '', filerStatus: v.filerStatus || '',
+      whtTaxCodeId: p.whtTaxCodeId || '', grossPaisa: settled || p.amountPaisa + p.whtPaisa, whtPaisa: p.whtPaisa, netPaidPaisa: p.amountPaisa });
+  });
+  rows.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : (a.paymentId < b.paymentId ? -1 : 1); });
+  return { rows: rows, totalWhtPaisa: rows.reduce(function (t, r) { return t + r.whtPaisa; }, 0) };
+}
+
+// ---------- Month close (M9.1) ----------
+
+// What should be true before a month is locked. Each check is
+// {key, label, ok, blocking, detail}. Blocking checks must pass; the others
+// are warnings the Owner can acknowledge.
+// data: {lines, stockMoves, acc, items, sales, cashUps, stockCounts, periods, bankRecs}
+function closeChecklist(periodId, data) {
+  const m = /^(\d{4})-(\d{2})$/.exec(periodId);
+  if (!m) Validate.fail('E_VALIDATION', 'Period must be YYYY-MM', 'periodId');
+  const from = periodId + '-01';
+  const to = new Date(Date.UTC(Number(m[1]), Number(m[2]), 0)).toISOString().slice(0, 10);
+  const checks = [];
+  const integrity = integrityChecks(data.lines, data.stockMoves, data.acc, data.items, { asOf: to });
+  const tb = integrity[0];
+  checks.push({ key: 'TB', label: 'Trial balance balances', ok: tb.ok, blocking: true, detail: tb.ok ? '' : 'Debits ' + tb.glPaisa + ' vs credits ' + tb.subledgerPaisa });
+  const bad = integrity.slice(1).filter(function (c) { return !c.ok; });
+  checks.push({ key: 'CONTROL', label: 'Control accounts and stock agree with their records', ok: !bad.length, blocking: true, detail: bad.map(function (c) { return c.name; }).join('; ') });
+  const daysWithSales = {};
+  (data.sales || []).forEach(function (x) { if (x.status !== 'VOID' && x.date >= from && x.date <= to) daysWithSales[x.date + '|' + (x.store || '')] = true; });
+  const cashedUp = {};
+  (data.cashUps || []).forEach(function (c) { cashedUp[c.date + '|' + (c.store || '')] = true; });
+  const missing = Object.keys(daysWithSales).filter(function (k) { return !cashedUp[k]; }).sort();
+  checks.push({ key: 'CASHUP', label: 'Cash-up done for every trading day', ok: !missing.length, blocking: false, detail: missing.map(function (k) { return k.replace('|', ' '); }).join(', ') });
+  const counted = (data.stockCounts || []).some(function (c) { return c.status === 'POSTED' && c.date >= from && c.date <= to; });
+  checks.push({ key: 'COUNT', label: 'Stock counted this month', ok: counted, blocking: false, detail: counted ? '' : 'No stock count dated in ' + periodId });
+  const reconciled = (data.bankRecs || []).some(function (r) { return r.status === 'RECONCILED' && r.statementDate >= to; });
+  checks.push({ key: 'BANK', label: 'Bank accounts reconciled to month end', ok: reconciled, blocking: false, detail: reconciled ? '' : 'No reconciliation to ' + to + ' or later' });
+  const prev = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 2, 1)).toISOString().slice(0, 7);
+  const anyLines = data.lines.some(function (l) { return l.date < from; });
+  const prevClosed = (data.periods || []).some(function (p) { return p.id === prev && p.status === 'CLOSED'; });
+  checks.push({ key: 'PREVIOUS', label: 'Previous month is closed', ok: prevClosed || !anyLines, blocking: false, detail: prevClosed || !anyLines ? '' : prev + ' is still open' });
+  return { periodId: periodId, from: from, to: to, checks: checks, canClose: checks.every(function (c) { return c.ok || !c.blocking; }), warnings: checks.filter(function (c) { return !c.ok && !c.blocking; }).length };
+}
+
 // ---------- Ageing ----------
 
 function daysBetween(a, b) {
@@ -3358,6 +3504,11 @@ return {
   jobProfitability,
   stockValuation,
   inventoryReconciliation,
+  skuMargin,
+  cashPosition,
+  salesTaxSummary,
+  whtRegister,
+  closeChecklist,
   ageing,
   integrityChecks,
 };
