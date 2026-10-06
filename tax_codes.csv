@@ -1,0 +1,12 @@
+id,name,kind,rateBps,claimable,whtBase,appliesTo,vendorFilerStatus,effectiveFrom,effectiveTo,isActive,notes
+ST-STD,Sales tax - standard (CONFIRM RATE),SALES_OUTPUT,1800,FALSE,,GOODS,ANY,2025-07-01,,TRUE,Placeholder. Confirm with tax advisor (D-02)
+ST-IN-STD,Input sales tax - standard (CONFIRM RATE),PURCHASE_INPUT,1800,TRUE,,GOODS,ANY,2025-07-01,,TRUE,Claimable only from registered suppliers
+ST-IN-NC,Input tax - not claimable,PURCHASE_INPUT,1800,FALSE,,ANY,ANY,2025-07-01,,TRUE,Capitalised into cost
+SRV-SINDH,Sindh sales tax on services (CONFIRM RATE),SALES_OUTPUT,0,FALSE,,SERVICES,ANY,2025-07-01,,FALSE,Set rate before activating (D-02)
+EXEMPT,Exempt,EXEMPT,0,FALSE,,ANY,ANY,2025-07-01,,TRUE,
+ZERO,Zero rated,ZERO,0,FALSE,,ANY,ANY,2025-07-01,,TRUE,
+WHT-GOODS-F,WHT goods - filer (CONFIRM RATE),WHT,0,FALSE,EXCL_SALES_TAX,GOODS,FILER,2025-07-01,,FALSE,Set rate before activating (D-04)
+WHT-GOODS-NF,WHT goods - non-filer (CONFIRM RATE),WHT,0,FALSE,EXCL_SALES_TAX,GOODS,NON_FILER,2025-07-01,,FALSE,Set rate before activating (D-04)
+WHT-SVC-F,WHT services - filer (CONFIRM RATE),WHT,0,FALSE,EXCL_SALES_TAX,SERVICES,FILER,2025-07-01,,FALSE,Set rate before activating (D-04)
+WHT-SVC-NF,WHT services - non-filer (CONFIRM RATE),WHT,0,FALSE,EXCL_SALES_TAX,SERVICES,NON_FILER,2025-07-01,,FALSE,Set rate before activating (D-04)
+WHT-RENT,WHT on rent (CONFIRM RATE),WHT,0,FALSE,GROSS,SERVICES,ANY,2025-07-01,,FALSE,Set rate before activating (D-04)

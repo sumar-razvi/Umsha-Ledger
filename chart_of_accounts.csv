@@ -1,0 +1,73 @@
+code,name,type,subType,normalBalance,isContra,systemKey,defaultBrand,isMoney,moneyKind,qbAccountName
+1010,Cash in hand - Studio,ASSET,CURRENT,DEBIT,FALSE,,UMSHA,TRUE,CASH,Cash - Studio
+1020,Cash in hand - Mirae store,ASSET,CURRENT,DEBIT,FALSE,,MIRAE,TRUE,CASH,Cash - Mirae Store
+1030,Petty cash,ASSET,CURRENT,DEBIT,FALSE,,SHARED,TRUE,PETTY,Petty Cash
+1100,Bank 1 - Operating,ASSET,CURRENT,DEBIT,FALSE,,SHARED,TRUE,BANK,Bank 1 Operating
+1101,Bank 2,ASSET,CURRENT,DEBIT,FALSE,,SHARED,TRUE,BANK,Bank 2
+1120,Wallet - JazzCash,ASSET,CURRENT,DEBIT,FALSE,,SHARED,TRUE,WALLET,JazzCash
+1121,Wallet - Easypaisa,ASSET,CURRENT,DEBIT,FALSE,,SHARED,TRUE,WALLET,Easypaisa
+1200,Accounts receivable,ASSET,CURRENT,DEBIT,FALSE,AR,SHARED,FALSE,,Accounts Receivable (A/R)
+1210,Card & wallet clearing,ASSET,CURRENT,DEBIT,FALSE,CARD_CLEARING,MIRAE,TRUE,CLEARING,Card Clearing
+1300,Inventory - raw fabric,ASSET,INVENTORY,DEBIT,FALSE,INV_FABRIC,SHARED,FALSE,,Inventory - Fabric
+1310,Inventory - trims & embellishments,ASSET,INVENTORY,DEBIT,FALSE,INV_TRIMS,SHARED,FALSE,,Inventory - Trims
+1320,Inventory - packaging,ASSET,INVENTORY,DEBIT,FALSE,INV_PACKAGING,SHARED,FALSE,,Inventory - Packaging
+1330,Work in progress - jobs,ASSET,INVENTORY,DEBIT,FALSE,WIP,SHARED,FALSE,,Work in Progress
+1340,Finished goods - RTW,ASSET,INVENTORY,DEBIT,FALSE,INV_FG,MIRAE,FALSE,,Inventory - Finished Goods
+1400,Advances to vendors & karigars,ASSET,CURRENT,DEBIT,FALSE,VENDOR_ADV,SHARED,FALSE,,Vendor Advances
+1410,Staff advances,ASSET,CURRENT,DEBIT,FALSE,,SHARED,FALSE,,Staff Advances
+1500,Input sales tax,ASSET,CURRENT,DEBIT,FALSE,INPUT_TAX,SHARED,FALSE,,Input Sales Tax
+1510,Advance income tax / WHT suffered,ASSET,CURRENT,DEBIT,FALSE,,SHARED,FALSE,,Advance Income Tax
+1600,Prepayments & security deposits,ASSET,CURRENT,DEBIT,FALSE,,SHARED,FALSE,,Prepayments and Deposits
+1700,Machinery & equipment,ASSET,FIXED,DEBIT,FALSE,,SHARED,FALSE,,Machinery and Equipment
+1710,"Furniture, fixtures 1710,Furniture, fixtures & store fit-out, store fit-out",ASSET,FIXED,DEBIT,FALSE,,SHARED,FALSE,,Furniture and Fixtures
+1720,IT equipment,ASSET,FIXED,DEBIT,FALSE,,SHARED,FALSE,,IT Equipment
+1790,Accumulated depreciation,ASSET,FIXED,CREDIT,TRUE,,SHARED,FALSE,,Accumulated Depreciation
+2010,Accounts payable,LIABILITY,CURRENT,CREDIT,FALSE,AP,SHARED,FALSE,,Accounts Payable (A/P)
+2100,Customer advances (MTO deposits),LIABILITY,CURRENT,CREDIT,FALSE,CUSTOMER_ADV,UMSHA,FALSE,,Customer Deposits
+2110,Gift vouchers & store credit,LIABILITY,CURRENT,CREDIT,FALSE,STORE_CREDIT,MIRAE,TRUE,CLEARING,Store Credit
+2200,Output sales tax,LIABILITY,CURRENT,CREDIT,FALSE,OUTPUT_TAX,SHARED,FALSE,,Output Sales Tax
+2210,Withholding tax payable,LIABILITY,CURRENT,CREDIT,FALSE,WHT_PAYABLE,SHARED,FALSE,,WHT Payable
+2300,Accrued expenses,LIABILITY,CURRENT,CREDIT,FALSE,,SHARED,FALSE,,Accrued Expenses
+2400,Salaries payable,LIABILITY,CURRENT,CREDIT,FALSE,,SHARED,FALSE,,Salaries Payable
+2500,Directors' / family loan account,LIABILITY,NONCURRENT,CREDIT,FALSE,,SHARED,FALSE,,Directors Loan
+3010,Owners' capital,EQUITY,,CREDIT,FALSE,,SHARED,FALSE,,Owner's Capital
+3020,Owner drawings,EQUITY,,DEBIT,TRUE,OWNER_DRAWINGS,SHARED,FALSE,,Owner Drawings
+3030,Retained earnings,EQUITY,,CREDIT,FALSE,RETAINED_EARNINGS,SHARED,FALSE,,Retained Earnings
+4010,MTO sales - bridal & couture,REVENUE,,CREDIT,FALSE,,UMSHA,FALSE,,Sales - MTO Bridal
+4020,MTO sales - formals,REVENUE,,CREDIT,FALSE,,UMSHA,FALSE,,Sales - MTO Formals
+4030,Alterations & services,REVENUE,,CREDIT,FALSE,,UMSHA,FALSE,,Sales - Alterations
+4040,Order cancellation income,REVENUE,,CREDIT,FALSE,CANCEL_INCOME,UMSHA,FALSE,,Cancellation Income
+4100,RTW sales - store,REVENUE,,CREDIT,FALSE,,MIRAE,FALSE,,Sales - RTW Store
+4110,RTW sales - online,REVENUE,,CREDIT,FALSE,,MIRAE,FALSE,,Sales - RTW Online
+4120,RTW sales - exhibitions,REVENUE,,CREDIT,FALSE,,MIRAE,FALSE,,Sales - RTW Exhibitions
+4900,Sales returns & discounts,REVENUE,,DEBIT,TRUE,SALES_RETURNS,MIRAE,FALSE,,Sales Returns and Discounts
+5010,Fabric consumed,COGS,,DEBIT,FALSE,,UMSHA,FALSE,,COGS - Fabric
+5020,Trims & embellishments consumed,COGS,,DEBIT,FALSE,,UMSHA,FALSE,,COGS - Trims
+5030,Embroidery labour (karigar),COGS,,DEBIT,FALSE,,UMSHA,FALSE,,COGS - Embroidery Labour
+5040,Stitching & tailoring labour,COGS,,DEBIT,FALSE,,UMSHA,FALSE,,COGS - Stitching Labour
+5050,Dyeing printing & outsourced work,COGS,,DEBIT,FALSE,,UMSHA,FALSE,,COGS - Outsourced
+5060,Packaging,COGS,,DEBIT,FALSE,,SHARED,FALSE,,COGS - Packaging
+5070,Other direct costs,COGS,,DEBIT,FALSE,,UMSHA,FALSE,,COGS - Other Direct
+5100,Cost of goods sold - RTW,COGS,,DEBIT,FALSE,COGS_RTW,MIRAE,FALSE,,COGS - RTW
+5900,Inventory adjustments & shrinkage,COGS,,DEBIT,FALSE,SHRINKAGE,SHARED,FALSE,,Inventory Shrinkage
+6010,Salaries & wages,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Salaries and Wages
+6020,Rent - store,EXPENSE,,DEBIT,FALSE,,MIRAE,FALSE,,Rent - Store
+6030,Rent - studio & workshop,EXPENSE,,DEBIT,FALSE,,UMSHA,FALSE,,Rent - Studio
+6040,Utilities,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Utilities
+6050,Generator & fuel,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Generator and Fuel
+6100,Marketing - shoots & models,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Marketing - Shoots
+6110,Marketing - digital ads,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Marketing - Digital
+6120,Exhibitions & events,EXPENSE,,DEBIT,FALSE,,MIRAE,FALSE,,Exhibitions
+6200,Courier & delivery,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Courier and Delivery
+6210,Payment processing fees,EXPENSE,,DEBIT,FALSE,CARD_FEES,MIRAE,FALSE,,Merchant Fees
+6300,Professional fees,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Professional Fees
+6400,Repairs & maintenance,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Repairs and Maintenance
+6500,Travel & conveyance,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Travel
+6600,Bank charges,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Bank Charges
+6700,Depreciation,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Depreciation
+6800,Office & miscellaneous,EXPENSE,,DEBIT,FALSE,,SHARED,FALSE,,Office and Misc
+6810,Cash over / short,EXPENSE,,DEBIT,FALSE,CASH_OVER_SHORT,MIRAE,FALSE,,Cash Over Short
+7010,Exchange gain / loss,OTHER,,CREDIT,FALSE,FX_GAIN_LOSS,SHARED,FALSE,,FX Gain Loss
+7020,Interest & other income,OTHER,,CREDIT,FALSE,,SHARED,FALSE,,Other Income
+7030,Rounding differences,OTHER,,DEBIT,FALSE,ROUNDING,SHARED,FALSE,,Rounding
+8010,Income tax expense,TAX,,DEBIT,FALSE,,SHARED,FALSE,,Income Tax Expense

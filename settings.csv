@@ -1,0 +1,15 @@
+key,value
+companyName,UMSHA
+ntn,
+strn,
+baseCurrency,PKR
+fiscalYearStartMonth,7
+timezone,Asia/Karachi
+allocationKey,REVENUE
+allocationUmshaPctBps,6000
+rtwPricesIncludeTax,TRUE
+allowNegativeStock,FALSE
+defaultMtoRevenueAccount,4010
+backupFolderId,
+attachmentsFolderId,
+whatsappReceiptTemplate,"Dear {name}, thank you. Received Rs {amount} for {docId}. Balance Rs {balance}. UMSHA"
