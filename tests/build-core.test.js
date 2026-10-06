@@ -34,8 +34,25 @@ describe('scripts/build-core.js', () => {
     }
   });
 
-  test('dependencies come first (Money before Ids)', () => {
-    assert.ok(out.indexOf('var Money =') < out.indexOf('var Ids ='));
+  test('dependencies come first', () => {
+    const at = (ns) => out.indexOf('var ' + ns + ' =');
+    assert.ok(at('Money') < at('Ids'));
+    assert.ok(at('Money') < at('Validate') && at('Validate') < at('Inventory'));
+    assert.ok(at('Inventory') < at('Posting') && at('Inventory') < at('Reports'));
+  });
+
+  test('the posting engine runs inside Core.gs (R1 advance)', () => {
+    const ctx = runInAppsScriptLikeContext(out);
+    const index = ctx.Validate.indexAccounts([
+      { code: '1100', name: 'Bank', type: 'ASSET', isMoney: 'TRUE', moneyKind: 'BANK' },
+      { code: '2100', name: 'Customer advances', type: 'LIABILITY', systemKey: 'CUSTOMER_ADV' },
+    ]);
+    const postingCtx = Object.assign({}, index, {
+      settings: {}, periods: [], jobs: { 'JOB-2026-00001': { id: 'JOB-2026-00001', type: 'MTO_ORDER', brand: 'UMSHA', status: 'OPEN', contactId: 'CUS-00001' } },
+    });
+    const e = ctx.Posting.receiveAdvance({ date: '2026-10-01', jobId: 'JOB-2026-00001', amountPaisa: 30000000, moneyAccountCode: '1100' }, postingCtx);
+    // JSON round-trip: arrays made inside the VM have a different Array prototype.
+    assert.deepEqual(JSON.parse(JSON.stringify(e.lines.map((l) => [l.accountCode, l.debitPaisa, l.creditPaisa]))), [['1100', 30000000, 0], ['2100', 0, 30000000]]);
   });
 
   test('committed apps-script/Core.gs is up to date (run `npm run build` if this fails)', () => {

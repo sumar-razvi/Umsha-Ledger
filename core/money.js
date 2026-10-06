@@ -68,8 +68,50 @@ function applyBps(amountPaisa, bps) {
   return divRoundHalfEven(BigInt(amountPaisa) * BigInt(bps), BPS_DENOMINATOR);
 }
 
-// Turn decimal weights (e.g. 1, 1.5, 0.25) into exact BigInts on a common scale.
+// Parse a plain decimal (number or string, e.g. 2.5, "278.45") exactly into
+// {units: BigInt, places}: 278.45 -> {units: 27845n, places: 2}. Throws when
+// it has more than maxPlaces significant decimals.
+function parseDecimal(value, maxPlaces, field) {
+  let s;
+  if (typeof value === 'number' && Number.isFinite(value)) s = String(value);
+  else if (typeof value === 'string') s = value.trim().replace(/,/g, '');
+  else throw validationError((field || 'value') + ' must be a number, got ' + value, field);
+  const m = /^(-?)(\d*)(?:\.(\d*))?$/.exec(s);
+  if (!m || (m[2] === '' && (m[3] === undefined || m[3] === ''))) {
+    throw validationError((field || 'value') + ' must be a plain decimal number, got ' + value, field);
+  }
+  let frac = (m[3] || '').replace(/0+$/, '');
+  if (frac.length > maxPlaces) {
+    throw validationError((field || 'value') + ' allows at most ' + maxPlaces + ' decimal places, got ' + value, field);
+  }
+  const units = BigInt((m[1] || '') + (m[2] || '0') + frac);
+  return { units: units, places: frac.length };
+}
+
+// value x 10^places as an exact safe integer: scaleDecimal(2.5, 3) = 2500.
+function scaleDecimal(value, places, field) {
+  const d = parseDecimal(value, places, field);
+  return toSafeNumber(d.units * 10n ** BigInt(places - d.places));
+}
+
+// Foreign currency to paisa (R19): fxAmount (e.g. 1500.25 USD) x fxRate (PKR
+// per unit, up to 6 decimals), rounded half-even to the paisa.
+function fxToPaisa(fxAmount, fxRate) {
+  const minor = BigInt(scaleDecimal(fxAmount, 2, 'fxAmount'));
+  const rate = parseDecimal(fxRate, 6, 'fxRate');
+  if (minor <= 0n || rate.units <= 0n) throw validationError('Foreign amount and rate must be positive', 'fxAmount');
+  return divRoundHalfEven(minor * rate.units, 10n ** BigInt(rate.places));
+}
+
+// Turn weights into exact BigInts on a common scale. Weights are decimal
+// numbers (e.g. 1, 1.5, 0.25) or, from callers that already scaled them, BigInts.
 function scaleWeights(weights) {
+  if (weights.every(function (w) { return typeof w === 'bigint'; })) {
+    weights.forEach(function (w) {
+      if (w < 0n) throw validationError('Weights must be non-negative', 'weights');
+    });
+    return weights.slice();
+  }
   let maxDecimals = 0;
   const strs = weights.map(function (w, i) {
     if (typeof w !== 'number' || !Number.isFinite(w) || w < 0) {
@@ -220,6 +262,9 @@ if (typeof module !== 'undefined') module.exports = {
   assertPaisa,
   roundHalfEven,
   divRoundHalfEven,
+  parseDecimal,
+  scaleDecimal,
+  fxToPaisa,
   applyBps,
   splitProRata,
   parseRupees,

@@ -95,6 +95,8 @@ Incremented only under script lock.
 ### `ItemBalances` (cache, rebuildable)
 `itemId, qty, avgCostMicro, valuePaisa, lastMoveId, updatedAt`
 Maintained on every stock move under lock **and** fully rebuildable from `StockMoves` by `rebuildItemBalances()`. Needed so average cost is O(1) to read. A nightly check compares it to a rebuild and logs any drift to `AuditLog`.
+The rebuild replays moves in **row (posting) order**, not date order: weighted average depends on the order stock was actually received and issued, so a back-dated entry does not re-cost later movements.
+Quantities are decimals with up to 3 places (D-19); `core/inventory.js` does the arithmetic in integer thousandths.
 
 ---
 
@@ -129,8 +131,8 @@ header + `kind, channel, store, netPaisa, taxPaisa, grossPaisa, discountPaisa, p
 - `kind` ∈ `SALE, RETURN, EXCHANGE`; `channel` ∈ `STORE, ONLINE, EXHIBITION`
 
 ### `SaleLines`
-`id, saleId, itemId, qty, unitPricePaisa, discountPaisa, netPaisa, taxPaisa, unitCostMicro, costPaisa, restock`
-`unitCostMicro` snapshot at time of sale, so returns use original cost (R12).
+`id, saleId, itemId, qty, unitPricePaisa, discountPaisa, netPaisa, taxPaisa, unitCostMicro, costPaisa, restock, returnedQty, returnedNetPaisa, returnedTaxPaisa, returnedCostPaisa`
+`unitCostMicro` snapshot at time of sale, so returns use original cost (R12). The `returned*` columns on a sale's lines are updated by each return or exchange against it (docUpdate `SALE_LINE`), so a partial return is valued pro rata and the last piece returned takes exactly what is left.
 
 ### `SalePayments`
 `id, saleId, method, accountCode, amountPaisa, reference`
@@ -142,6 +144,8 @@ header + `vendorRef (their invoice no.), dueDate, netPaisa, taxPaisa, grossPaisa
 ### `BillLines`
 `id, billId, lineKind, accountCode, itemId, qty, unitCostPaisa, jobId, costComponent, brand, taxCodeId, netPaisa, taxPaisa, description`
 lineKind ∈ `STOCK, JOB, EXPENSE`.
+`brand` is the line's brand after posting rules (SHARED for raw stock, the job's brand for job lines, chosen for expenses). A bill's gross per brand (Σ `netPaisa + taxPaisa` by `brand`) is what payments are split by (D-17); the server passes it to the posting engine as `bills[id].grossByBrand`.
+`paidPaisa` on Bills counts everything settled against the bill, cash **plus** WHT withheld; `balancePaisa = grossPaisa − paidPaisa`.
 
 ### `Payments` (money in/out not tied to a sale)
 header + `direction, kind, moneyAccountCode, amountPaisa, whtPaisa, whtTaxCodeId, currency, fxAmount, fxRate, reference`
@@ -153,8 +157,10 @@ header + `direction, kind, moneyAccountCode, amountPaisa, whtPaisa, whtTaxCodeId
 docType ∈ `INVOICE, BILL, JOB` (JOB for advances against an MTO order).
 
 ### `StockMoves`
-`id, date, itemId, qty (signed), unitCostMicro, valuePaisa (signed), moveType, docType, docId, jobId, jeId, createdAt`
-moveType ∈ `PURCHASE, ISSUE, RETURN_TO_STOCK, BATCH_OUTPUT, SALE, SALE_RETURN, ADJUSTMENT, OPENING`.
+`id, date, itemId, qty (signed), unitCostMicro, valuePaisa (signed), moveType, docType, docId, jobId, sourceMoveId, jeId, createdAt`
+moveType ∈ `PURCHASE, ISSUE, RETURN_TO_STOCK, BATCH_OUTPUT, SALE, SALE_RETURN, ADJUSTMENT, OPENING, REVERSAL`.
+- `sourceMoveId`: for `RETURN_TO_STOCK`, the `ISSUE` move it returns (so the return is valued at the original issue cost, R7); for `REVERSAL`, the move it reverses (R22).
+- An `ADJUSTMENT` with qty 0 clears value left behind when a reversal empties an item (R22).
 
 ### `StockCounts` / `StockCountLines`
 `id, date, location, status, jeId, createdBy` / `id, countId, itemId, systemQty, countedQty, diffQty, valuePaisa`
@@ -171,11 +177,17 @@ moveType ∈ `PURCHASE, ISSUE, RETURN_TO_STOCK, BATCH_OUTPUT, SALE, SALE_RETURN,
 
 ### `Journal`
 `id, date, docType, docId, memo, isManual, isClosing, reversesJeId, reversedByJeId, requestId, createdBy, createdAt`
+- docType ∈ `PAYMENT, BILL, EXPENSE, INVOICE, SALE, STOCK_ISSUE, STOCK_RETURN, BATCH_COMPLETION, JOB_CANCELLATION, STOCK_COUNT, CASHUP, MANUAL, OPENING, CLOSING`. For `STOCK_ISSUE`, `STOCK_RETURN`, `BATCH_COMPLETION` and `JOB_CANCELLATION`, `docId` is the job ID.
+- A reversal has the same docType/docId as the entry it reverses, plus `reversesJeId`.
+- `reversedByJeId` is the one column of `Journal` written after posting: set once, from empty to the reversing entry's ID, in the same locked write as the reversal. It is a link, not an amount; nothing financial on `Journal` ever changes.
 
 ### `JournalLines`
 `id, jeId, date, accountCode, brand, debitPaisa, creditPaisa, contactId, jobId, itemId, qty, costComponent, currency, fxAmount, fxRate, lateCost, reconciled, reconciledDate, memo`
 - `date` duplicated from header so reports filter one tab.
 - `reconciled`/`reconciledDate` are the **only** columns that may be updated after posting (bank rec). Everything else is immutable.
+- `qty` is signed with the stock direction on inventory lines (negative when stock goes out).
+- Every line on AR, AP, customer advances and vendor advances has a `contactId`; every WIP line has a `jobId`; every inventory line has an `itemId`. `core/validate.js` rejects entries that break this, which is what keeps control accounts equal to their sub-ledgers.
+- Reports read `Journal.isClosing` joined onto each line as `isClosing`, so the P&L can leave year-end closing entries out.
 
 ---
 
