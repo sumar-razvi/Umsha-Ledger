@@ -1,5 +1,6 @@
 key,value
 companyName,UMSHA
+rtwBrandName,Mirae
 ntn,
 strn,
 baseCurrency,PKR
@@ -11,6 +12,8 @@ currencyGrouping,STANDARD
 rtwPricesIncludeTax,TRUE
 allowNegativeStock,FALSE
 defaultMtoRevenueAccount,4010
+storeCashAccount,1020
+walletAccount,1120
 backupFolderId,
 attachmentsFolderId,
 whatsappReceiptTemplate,"Dear {name}, thank you. Received Rs {amount} for {docId}. Balance Rs {balance}. UMSHA"

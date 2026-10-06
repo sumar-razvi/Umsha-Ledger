@@ -62,6 +62,43 @@ function paymentsByJe_(jeId) {
   return out;
 }
 
+// A sale with its lines, as Posting.returnSale/exchangeSale expect in ctx.sales.
+function saleCtx_(id) {
+  var sale = Db.get('Sales', id);
+  if (!sale) throw Validate.coreError('E_NOT_FOUND', 'Sale ' + id + ' not found', 'originalSaleId');
+  var out = {};
+  out[id] = { sale: sale, lines: Db.read('SaleLines').filter(function (l) { return l.saleId === id; }) };
+  return out;
+}
+
+// Store staff always sell, refund and count in their own store.
+function storeFor_(env, p) {
+  if (env.user.role === 'STORE') return env.user.store;
+  return p.store || '';
+}
+
+function persistSale_(env, doc, jeId, payments) {
+  env.tx.append('Sales', [Object.assign(docHeader_(env, doc, jeId), {
+    brand: 'MIRAE', kind: doc.kind, channel: doc.channel || 'STORE', store: doc.store, netPaisa: doc.netPaisa, taxPaisa: doc.taxPaisa,
+    grossPaisa: doc.grossPaisa, discountPaisa: doc.discountPaisa || 0, pricesIncludeTax: !!doc.pricesIncludeTax, fbrInvoiceNo: doc.fbrInvoiceNo || '',
+    originalSaleId: doc.originalSaleId || '',
+  })]);
+  var n = 0;
+  var lines = [];
+  (doc.returnLines || (doc.kind === 'RETURN' ? doc.lines : [])).forEach(function (l) {
+    lines.push({ id: Ids.formatLineId(doc.id, ++n), saleId: doc.id, itemId: l.itemId, qty: -l.qty, netPaisa: -l.netPaisa, taxPaisa: -l.taxPaisa, costPaisa: -l.costPaisa, restock: l.restock, originalLineId: l.originalLineId });
+  });
+  if (doc.kind !== 'RETURN') {
+    (doc.lines || []).forEach(function (l) {
+      lines.push(Object.assign({ id: Ids.formatLineId(doc.id, ++n), saleId: doc.id, restock: false, returnedQty: 0, returnedNetPaisa: 0, returnedTaxPaisa: 0, returnedCostPaisa: 0, originalLineId: '' }, l));
+    });
+  }
+  env.tx.append('SaleLines', lines);
+  env.tx.append('SalePayments', (payments || []).map(function (p, i) {
+    return { id: Ids.formatLineId(doc.id, i + 1), saleId: doc.id, method: p.method, accountCode: p.accountCode, amountPaisa: p.amountPaisa, reference: p.reference || '' };
+  }));
+}
+
 // Open / part-paid / paid, from a bill's balance.
 function billState_(b) {
   if (b.status === 'VOID') return 'VOID';
@@ -517,13 +554,17 @@ var Actions = {
     });
   },
 
-  'receipts.render': function (p) {
+  'receipts.render': function (p, env) {
     var settings = Db.settings();
     if (p.docType === 'INVOICE') {
       var data = Actions['invoices.get']({ id: p.docId });
       return Receipts.invoiceDocument({ settings: settings, invoice: data.invoice, lines: data.lines, contact: data.contact, job: data.job });
     }
-    if (p.docType !== 'PAYMENT') throw Validate.coreError('E_VALIDATION', 'Receipts are for payments and invoices', 'docType');
+    if (p.docType === 'SALE') {
+      var sd = Actions['sales.get']({ id: p.docId }, env);
+      return Receipts.saleReceipt({ settings: settings, sale: sd.sale, lines: sd.lines, payments: sd.payments, contact: sd.contact, items: Db.byKey('Items') });
+    }
+    if (p.docType !== 'PAYMENT') throw Validate.coreError('E_VALIDATION', 'Receipts are for payments, invoices and sales', 'docType');
     var pay = Db.get('Payments', p.docId);
     if (!pay) throw Validate.coreError('E_NOT_FOUND', 'Payment ' + p.docId + ' not found', 'docId');
     var allocs = Db.read('PaymentAllocations').filter(function (a) { return a.paymentId === pay.id; });
@@ -832,6 +873,173 @@ var Actions = {
       data: { countId: docId, jeId: ids.jeId, lines: entry.doc.lines, netValuePaisa: net },
       audit: { docType: 'STOCK_COUNT', docId: docId, summary: 'Stock count: ' + entry.doc.lines.filter(function (l) { return l.diffQty; }).length + ' difference(s), net ' + Money.formatPaisa(net) },
     };
+  },
+
+  // ---------- store (M6) ----------
+
+  'sale.create': function (p, env) {
+    var ctx = loadCtx_({ stock: true, contacts: true });
+    var date = need_(p.date, 'date', 'Enter the date');
+    var docId = env.tx.nextDocId('SALE', date);
+    var store = storeFor_(env, p);
+    var entry = Posting.createSale(Object.assign({}, p, { docId: docId, store: store }), ctx);
+    var ids = postEntry_(env, entry);
+    persistSale_(env, entry.doc, ids.jeId, entry.doc.payments);
+    return {
+      data: { saleId: docId, jeId: ids.jeId, grossPaisa: entry.doc.grossPaisa },
+      audit: { docType: 'SALE', docId: docId, summary: 'Sale ' + Money.formatPaisa(entry.doc.grossPaisa) + (store ? ' at ' + store : '') },
+    };
+  },
+
+  'sale.return': function (p, env) {
+    var ctx = loadCtx_({ stock: true });
+    ctx.sales = saleCtx_(need_(p.originalSaleId, 'originalSaleId', 'Find the original sale'));
+    var orig = ctx.sales[p.originalSaleId].sale;
+    if (env.user.role === 'STORE' && orig.store && orig.store !== env.user.store) throw Validate.coreError('E_ROLE', 'That sale was made at another store');
+    var date = need_(p.date, 'date', 'Enter the date');
+    var docId = env.tx.nextDocId('SALE', date);
+    var entry = Posting.returnSale(Object.assign({}, p, { docId: docId }), ctx);
+    var ids = postEntry_(env, entry);
+    var doc = Object.assign({}, entry.doc, { store: storeFor_(env, p) || orig.store });
+    // Refunds are stored as negative payments so a day's takings by method net them off.
+    persistSale_(env, doc, ids.jeId, doc.payments.map(function (x) { return Object.assign({}, x, { amountPaisa: -x.amountPaisa }); }));
+    return {
+      data: { saleId: docId, jeId: ids.jeId, grossPaisa: doc.grossPaisa },
+      audit: { docType: 'SALE', docId: docId, summary: 'Return ' + Money.formatPaisa(doc.grossPaisa) + ' against ' + orig.id },
+    };
+  },
+
+  'sale.exchange': function (p, env) {
+    var ctx = loadCtx_({ stock: true });
+    ctx.sales = saleCtx_(need_(p.originalSaleId, 'originalSaleId', 'Find the original sale'));
+    var orig = ctx.sales[p.originalSaleId].sale;
+    if (env.user.role === 'STORE' && orig.store && orig.store !== env.user.store) throw Validate.coreError('E_ROLE', 'That sale was made at another store');
+    var date = need_(p.date, 'date', 'Enter the date');
+    var docId = env.tx.nextDocId('SALE', date);
+    var entry = Posting.exchangeSale(Object.assign({}, p, { docId: docId, store: storeFor_(env, p) || orig.store }), ctx);
+    var ids = postEntry_(env, entry);
+    var pays = (entry.doc.payments || []).concat((entry.doc.refund || []).map(function (r) { return Object.assign({}, r, { amountPaisa: -r.amountPaisa }); }));
+    persistSale_(env, entry.doc, ids.jeId, pays);
+    return {
+      data: { saleId: docId, jeId: ids.jeId, grossPaisa: entry.doc.grossPaisa },
+      audit: { docType: 'SALE', docId: docId, summary: 'Exchange against ' + orig.id + ', difference ' + Money.formatPaisa(entry.doc.grossPaisa) },
+    };
+  },
+
+  'sales.list': function (p, env) {
+    var store = env.user.role === 'STORE' ? env.user.store : p.store;
+    var q = String(p.q || '').trim().toLowerCase();
+    var digits = q.replace(/\D/g, '');
+    var contacts = Db.byKey('Contacts');
+    return Db.read('Sales').filter(function (x) {
+      if (store && x.store !== store) return false;
+      if (p.date && x.date !== p.date) return false;
+      if (p.from && x.date < p.from) return false;
+      if (p.to && x.date > p.to) return false;
+      if (p.kind && x.kind !== p.kind) return false;
+      if (!q) return true;
+      var c = contacts[x.contactId];
+      return x.id.toLowerCase().indexOf(q) >= 0 || (c && (String(c.name).toLowerCase().indexOf(q) >= 0 || (digits.length >= 4 && String(c.phone).indexOf(digits.replace(/^0/, '')) >= 0)));
+    }).map(function (x) {
+      var c = contacts[x.contactId];
+      return Object.assign({}, x, { contactName: c ? c.name : '' });
+    }).sort(function (a, b) { return a.id < b.id ? 1 : -1; }).slice(0, Number(p.limit) || 100);
+  },
+
+  'sales.get': function (p, env) {
+    var sale = Db.get('Sales', p.id);
+    if (!sale) throw Validate.coreError('E_NOT_FOUND', 'Sale ' + p.id + ' not found', 'id');
+    if (env.user.role === 'STORE' && sale.store && sale.store !== env.user.store) throw Validate.coreError('E_ROLE', 'That sale was made at another store');
+    var items = Db.byKey('Items');
+    return {
+      sale: sale,
+      lines: Db.read('SaleLines').filter(function (l) { return l.saleId === sale.id; }).map(function (l) { return Object.assign({}, l, { itemName: (items[l.itemId] || {}).name || l.itemId }); }),
+      payments: Db.read('SalePayments').filter(function (x) { return x.saleId === sale.id; }),
+      contact: sale.contactId ? Db.get('Contacts', sale.contactId) : null,
+      returns: Db.read('Sales').filter(function (x) { return x.originalSaleId === sale.id; }),
+    };
+  },
+
+  // Expected cash = the store cash account's balance at the end of the day;
+  // expected card = card and wallet takings that day.
+  'cashup.preview': function (p, env) {
+    var date = p.date || Dates.karachiDate();
+    var store = storeFor_(env, p);
+    var cashCode = String(p.cashAccountCode || Db.settings().storeCashAccount || '1020');
+    var acc = Validate.indexAccounts(Db.read('Accounts'));
+    var cash = Reports.accountLedger(Db.read('JournalLines'), acc, { accountCode: cashCode, to: date });
+    var sales = Db.read('Sales').filter(function (x) { return x.date === date && x.status !== 'VOID' && (!store || x.store === store); });
+    var ids = {};
+    sales.forEach(function (x) { ids[x.id] = true; });
+    var byMethod = {};
+    Db.read('SalePayments').forEach(function (x) { if (ids[x.saleId]) byMethod[x.method] = (byMethod[x.method] || 0) + x.amountPaisa; });
+    var done = Db.read('CashUps').filter(function (c) { return c.date === date && (!store || c.store === store); });
+    return {
+      date: date, store: store, cashAccountCode: cashCode, expectedCashPaisa: cash.closingPaisa,
+      expectedCardPaisa: (byMethod.CARD || 0) + (byMethod.WALLET || 0), takingsByMethod: byMethod, alreadyDone: done,
+    };
+  },
+
+  'cashup.submit': function (p, env) {
+    var preview = Actions['cashup.preview'](p, env);
+    if (preview.alreadyDone.length) throw Validate.coreError('E_VALIDATION', 'The cash-up for ' + preview.date + ' is already done', 'date');
+    var ctx = loadCtx_({});
+    var docId = env.tx.nextDocId('CUP', preview.date);
+    var entry = Posting.cashUp({
+      docId: docId, date: preview.date, store: preview.store, cashAccountCode: preview.cashAccountCode,
+      expectedCashPaisa: preview.expectedCashPaisa, countedCashPaisa: p.countedCashPaisa, expectedCardPaisa: preview.expectedCardPaisa, notes: p.notes,
+    }, ctx);
+    var ids = postEntry_(env, entry);
+    env.tx.append('CashUps', [Object.assign({}, entry.doc, { id: docId, jeId: ids.jeId, createdBy: env.user.email, createdAt: env.ts })]);
+    var d = entry.doc.diffPaisa;
+    return {
+      data: Object.assign({ cashUpId: docId, jeId: ids.jeId }, entry.doc),
+      audit: { docType: 'CASHUP', docId: docId, summary: 'Cash-up ' + preview.date + ': ' + (d === 0 ? 'exact' : (d > 0 ? 'over ' : 'short ') + Money.formatPaisa(Math.abs(d))) },
+    };
+  },
+
+  'reports.dailySales': function (p, env) {
+    var date = p.date || Dates.karachiDate();
+    var store = storeFor_(env, p);
+    var sales = Actions['sales.list']({ date: date, store: store, limit: 1000 }, env).filter(function (x) { return x.status !== 'VOID'; });
+    var ids = {};
+    sales.forEach(function (x) { ids[x.id] = true; });
+    var byMethod = {};
+    Db.read('SalePayments').forEach(function (x) { if (ids[x.saleId]) byMethod[x.method] = (byMethod[x.method] || 0) + x.amountPaisa; });
+    var totals = { salesGrossPaisa: 0, returnsGrossPaisa: 0, netPaisa: 0, taxPaisa: 0, transactions: 0 };
+    sales.forEach(function (x) {
+      if (x.kind === 'SALE') { totals.salesGrossPaisa += x.grossPaisa; totals.transactions++; }
+      if (x.kind === 'RETURN') totals.returnsGrossPaisa += x.grossPaisa;
+      if (x.kind === 'EXCHANGE') totals.salesGrossPaisa += x.grossPaisa;
+      totals.netPaisa += x.kind === 'RETURN' ? -x.netPaisa : x.netPaisa;
+      totals.taxPaisa += x.kind === 'RETURN' ? -x.taxPaisa : x.taxPaisa;
+    });
+    var out = { date: date, store: store, sales: sales, byMethod: byMethod, totals: totals };
+    if (env.user.role === 'STORE') return out;
+    var cost = 0;
+    Db.read('SaleLines').forEach(function (l) { if (ids[l.saleId]) cost += l.costPaisa || 0; });
+    out.totals.costPaisa = cost;
+    return out;
+  },
+
+  'settlements.create': function (p, env) {
+    var ctx = loadCtx_({});
+    var date = need_(p.date, 'date', 'Enter the date');
+    var docId = env.tx.nextDocId('PAY', date);
+    var entry = Posting.settleCards(Object.assign({}, p, { docId: docId }), ctx);
+    var ids = postEntry_(env, entry);
+    persistPayment_(env, Object.assign({}, entry.doc, { brand: 'SHARED' }), ids.jeId, 'Settlement from ' + entry.doc.clearingCode + ', fee ' + Money.formatPaisa(entry.doc.feePaisa));
+    return { data: Object.assign({ paymentId: docId, jeId: ids.jeId }, entry.doc), audit: { docType: 'PAYMENT', docId: docId, summary: 'Card settlement ' + Money.formatPaisa(entry.doc.grossPaisa) + ', fee ' + Money.formatPaisa(entry.doc.feePaisa) } };
+  },
+
+  'transfers.create': function (p, env) {
+    var ctx = loadCtx_({});
+    var date = need_(p.date, 'date', 'Enter the date');
+    var docId = env.tx.nextDocId('PAY', date);
+    var entry = Posting.transfer(Object.assign({}, p, { docId: docId }), ctx);
+    var ids = postEntry_(env, entry);
+    persistPayment_(env, Object.assign({}, entry.doc, { brand: 'SHARED' }), ids.jeId, 'Transfer to ' + entry.doc.toAccountCode + (p.memo ? ': ' + p.memo : ''));
+    return { data: { paymentId: docId, jeId: ids.jeId }, audit: { docType: 'PAYMENT', docId: docId, summary: 'Transfer ' + Money.formatPaisa(entry.doc.amountPaisa) + ' ' + entry.doc.moneyAccountCode + ' to ' + entry.doc.toAccountCode } };
   },
 
   // ---------- ledger ----------

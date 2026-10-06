@@ -34,6 +34,7 @@ Numbers widen past the pad width rather than wrap (`INV-2026-100000`).
 | key | example | notes |
 |---|---|---|
 | companyName | UMSHA | |
+| rtwBrandName | Mirae | name printed on store receipts |
 | ntn | | |
 | strn | | sales tax registration |
 | baseCurrency | PKR | |
@@ -45,6 +46,8 @@ Numbers widen past the pad width rather than wrap (`INV-2026-100000`).
 | rtwPricesIncludeTax | TRUE | |
 | allowNegativeStock | FALSE | |
 | defaultMtoRevenueAccount | 4010 | |
+| storeCashAccount | 1020 | store cash drawer (sales, refunds, cash-up) |
+| walletAccount | 1120 | where "Wallet" payments at the till go |
 | backupFolderId | | Drive folder |
 | attachmentsFolderId | | Drive folder |
 | whatsappReceiptTemplate | `Dear {name}, thank you. Received Rs {amount} for {docId}. Balance Rs {balance}. UMSHA` | |
@@ -132,7 +135,8 @@ header + `kind, channel, store, netPaisa, taxPaisa, grossPaisa, discountPaisa, p
 - `kind` ∈ `SALE, RETURN, EXCHANGE`; `channel` ∈ `STORE, ONLINE, EXHIBITION`
 
 ### `SaleLines`
-`id, saleId, itemId, qty, unitPricePaisa, discountPaisa, netPaisa, taxPaisa, unitCostMicro, costPaisa, restock, returnedQty, returnedNetPaisa, returnedTaxPaisa, returnedCostPaisa`
+`id, saleId, itemId, qty, unitPricePaisa, discountPaisa, netPaisa, taxPaisa, unitCostMicro, costPaisa, restock, returnedQty, returnedNetPaisa, returnedTaxPaisa, returnedCostPaisa, originalLineId`
+Lines of a RETURN (and the returned part of an EXCHANGE) are stored with negative qty and amounts and point to the sold line in `originalLineId`. `SalePayments` of refunds are negative, so a day's takings by method net them off.
 `unitCostMicro` snapshot at time of sale, so returns use original cost (R12). The `returned*` columns on a sale's lines are updated by each return or exchange against it (docUpdate `SALE_LINE`), so a partial return is valued pro rata and the last piece returned takes exactly what is left.
 
 ### `SalePayments`

@@ -1317,6 +1317,7 @@ const MATRIX = {
   'sales.list': ['OFT', false],
   'sales.get': ['OFT', false],
   'cashup.submit': ['OFT', true],
+  'cashup.preview': ['OFT', false],
   'invoices.get': ['OFSV', false],
   'invoices.list': ['OFSV', false],
   'receipts.render': ['OFST', false],
@@ -2902,6 +2903,37 @@ function paymentVoucher(args) {
   };
 }
 
+// A store sale, return or exchange receipt (80 mm friendly). Prices on the
+// receipt are what the customer paid (tax-inclusive when the store prices
+// include tax); the tax inside is shown on its own line.
+// args: {settings, sale, lines, payments, contact, items: {itemId: {name}}}
+function saleReceipt(args) {
+  const sale = args.sale;
+  const settings = args.settings || {};
+  const contact = args.contact || {};
+  const items = args.items || {};
+  const sign = sale.kind === 'RETURN' ? -1 : 1;
+  const lines = (args.lines || []).map(function (l) {
+    const gross = (l.netPaisa || 0) + (l.taxPaisa || 0);
+    const it = items[l.itemId] || {};
+    return { label: it.name || l.itemId, itemId: l.itemId, qty: l.qty, discountPaisa: l.discountPaisa || 0, amountPaisa: sign * gross, isReturn: !!l.originalLineId && sale.kind !== 'RETURN' };
+  });
+  const paid = (args.payments || []).map(function (p) { return { method: p.method, amountPaisa: p.amountPaisa }; });
+  const title = sale.kind === 'RETURN' ? 'Refund' : sale.kind === 'EXCHANGE' ? 'Exchange' : 'Sale receipt';
+  const total = sale.grossPaisa;
+  // Store receipts carry the ready-to-wear brand (Settings.rtwBrandName), not the company name.
+  const brand = Object.assign({}, company(settings), { name: settings.rtwBrandName || 'Mirae' });
+  const text = 'Thank you for shopping at ' + brand.name + '. ' + title + ' ' + sale.id +
+    ': Rs ' + amount(Math.abs(total), settings) + (sale.kind === 'RETURN' ? ' refunded.' : '.');
+  return {
+    kind: 'SALE', saleKind: sale.kind, title: title, number: sale.id, date: sale.date, company: brand, store: sale.store || '',
+    to: { id: contact.id || '', name: contact.name || '', phone: contact.phone || '' },
+    reference: sale.originalSaleId ? 'Against ' + sale.originalSaleId : '', fbrInvoiceNo: sale.fbrInvoiceNo || '',
+    lines: lines, discountPaisa: sale.discountPaisa || 0, netPaisa: sale.netPaisa, taxPaisa: sale.taxPaisa, grossPaisa: total, payments: paid,
+    whatsappText: text, whatsappUrl: contact.phone ? whatsappUrl(contact.phone, text) : '',
+  };
+}
+
 return {
   DEFAULT_TEMPLATE,
   fillTemplate,
@@ -2910,6 +2942,7 @@ return {
   paymentReceipt,
   invoiceDocument,
   paymentVoucher,
+  saleReceipt,
 };
 })();
 
@@ -3360,7 +3393,7 @@ const TABS = {
   Invoices: { columns: DOC_HEADER.concat(['jobId', 'dueDate', 'netPaisa', 'taxPaisa', 'grossPaisa', 'taxCodeId', 'taxOverrideReason', 'advanceAppliedPaisa', 'paidPaisa', 'balancePaisa']) },
   InvoiceLines: { columns: ['id', 'invoiceId', 'description', 'itemId', 'qty', 'unitPricePaisa', 'discountPaisa', 'netPaisa', 'revenueAccount'] },
   Sales: { columns: DOC_HEADER.concat(['kind', 'channel', 'store', 'netPaisa', 'taxPaisa', 'grossPaisa', 'discountPaisa', 'pricesIncludeTax', 'fbrInvoiceNo', 'originalSaleId']) },
-  SaleLines: { columns: ['id', 'saleId', 'itemId', 'qty', 'unitPricePaisa', 'discountPaisa', 'netPaisa', 'taxPaisa', 'unitCostMicro', 'costPaisa', 'restock', 'returnedQty', 'returnedNetPaisa', 'returnedTaxPaisa', 'returnedCostPaisa'] },
+  SaleLines: { columns: ['id', 'saleId', 'itemId', 'qty', 'unitPricePaisa', 'discountPaisa', 'netPaisa', 'taxPaisa', 'unitCostMicro', 'costPaisa', 'restock', 'returnedQty', 'returnedNetPaisa', 'returnedTaxPaisa', 'returnedCostPaisa', 'originalLineId'] },
   SalePayments: { columns: ['id', 'saleId', 'method', 'accountCode', 'amountPaisa', 'reference'] },
   Bills: { columns: DOC_HEADER.concat(['vendorRef', 'dueDate', 'netPaisa', 'taxPaisa', 'grossPaisa', 'paidPaisa', 'whtPaisa', 'balancePaisa']) },
   BillLines: { columns: ['id', 'billId', 'lineKind', 'accountCode', 'itemId', 'qty', 'unitCostPaisa', 'jobId', 'costComponent', 'brand', 'taxCodeId', 'netPaisa', 'taxPaisa', 'description'] },

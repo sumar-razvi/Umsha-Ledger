@@ -76,6 +76,7 @@ var SEED = {
   ],
   "settings": [
     {"key":"companyName","value":"UMSHA"},
+    {"key":"rtwBrandName","value":"Mirae"},
     {"key":"ntn","value":""},
     {"key":"strn","value":""},
     {"key":"baseCurrency","value":"PKR"},
@@ -87,6 +88,8 @@ var SEED = {
     {"key":"rtwPricesIncludeTax","value":"TRUE"},
     {"key":"allowNegativeStock","value":"FALSE"},
     {"key":"defaultMtoRevenueAccount","value":"4010"},
+    {"key":"storeCashAccount","value":"1020"},
+    {"key":"walletAccount","value":"1120"},
     {"key":"backupFolderId","value":""},
     {"key":"attachmentsFolderId","value":""},
     {"key":"whatsappReceiptTemplate","value":"Dear {name}, thank you. Received Rs {amount} for {docId}. Balance Rs {balance}. UMSHA"},

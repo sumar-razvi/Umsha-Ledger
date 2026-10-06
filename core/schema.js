@@ -26,7 +26,7 @@ const TABS = {
   Invoices: { columns: DOC_HEADER.concat(['jobId', 'dueDate', 'netPaisa', 'taxPaisa', 'grossPaisa', 'taxCodeId', 'taxOverrideReason', 'advanceAppliedPaisa', 'paidPaisa', 'balancePaisa']) },
   InvoiceLines: { columns: ['id', 'invoiceId', 'description', 'itemId', 'qty', 'unitPricePaisa', 'discountPaisa', 'netPaisa', 'revenueAccount'] },
   Sales: { columns: DOC_HEADER.concat(['kind', 'channel', 'store', 'netPaisa', 'taxPaisa', 'grossPaisa', 'discountPaisa', 'pricesIncludeTax', 'fbrInvoiceNo', 'originalSaleId']) },
-  SaleLines: { columns: ['id', 'saleId', 'itemId', 'qty', 'unitPricePaisa', 'discountPaisa', 'netPaisa', 'taxPaisa', 'unitCostMicro', 'costPaisa', 'restock', 'returnedQty', 'returnedNetPaisa', 'returnedTaxPaisa', 'returnedCostPaisa'] },
+  SaleLines: { columns: ['id', 'saleId', 'itemId', 'qty', 'unitPricePaisa', 'discountPaisa', 'netPaisa', 'taxPaisa', 'unitCostMicro', 'costPaisa', 'restock', 'returnedQty', 'returnedNetPaisa', 'returnedTaxPaisa', 'returnedCostPaisa', 'originalLineId'] },
   SalePayments: { columns: ['id', 'saleId', 'method', 'accountCode', 'amountPaisa', 'reference'] },
   Bills: { columns: DOC_HEADER.concat(['vendorRef', 'dueDate', 'netPaisa', 'taxPaisa', 'grossPaisa', 'paidPaisa', 'whtPaisa', 'balancePaisa']) },
   BillLines: { columns: ['id', 'billId', 'lineKind', 'accountCode', 'itemId', 'qty', 'unitCostPaisa', 'jobId', 'costComponent', 'brand', 'taxCodeId', 'netPaisa', 'taxPaisa', 'description'] },

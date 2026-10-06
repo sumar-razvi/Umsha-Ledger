@@ -102,6 +102,37 @@ function paymentVoucher(args) {
   };
 }
 
+// A store sale, return or exchange receipt (80 mm friendly). Prices on the
+// receipt are what the customer paid (tax-inclusive when the store prices
+// include tax); the tax inside is shown on its own line.
+// args: {settings, sale, lines, payments, contact, items: {itemId: {name}}}
+function saleReceipt(args) {
+  const sale = args.sale;
+  const settings = args.settings || {};
+  const contact = args.contact || {};
+  const items = args.items || {};
+  const sign = sale.kind === 'RETURN' ? -1 : 1;
+  const lines = (args.lines || []).map(function (l) {
+    const gross = (l.netPaisa || 0) + (l.taxPaisa || 0);
+    const it = items[l.itemId] || {};
+    return { label: it.name || l.itemId, itemId: l.itemId, qty: l.qty, discountPaisa: l.discountPaisa || 0, amountPaisa: sign * gross, isReturn: !!l.originalLineId && sale.kind !== 'RETURN' };
+  });
+  const paid = (args.payments || []).map(function (p) { return { method: p.method, amountPaisa: p.amountPaisa }; });
+  const title = sale.kind === 'RETURN' ? 'Refund' : sale.kind === 'EXCHANGE' ? 'Exchange' : 'Sale receipt';
+  const total = sale.grossPaisa;
+  // Store receipts carry the ready-to-wear brand (Settings.rtwBrandName), not the company name.
+  const brand = Object.assign({}, company(settings), { name: settings.rtwBrandName || 'Mirae' });
+  const text = 'Thank you for shopping at ' + brand.name + '. ' + title + ' ' + sale.id +
+    ': Rs ' + amount(Math.abs(total), settings) + (sale.kind === 'RETURN' ? ' refunded.' : '.');
+  return {
+    kind: 'SALE', saleKind: sale.kind, title: title, number: sale.id, date: sale.date, company: brand, store: sale.store || '',
+    to: { id: contact.id || '', name: contact.name || '', phone: contact.phone || '' },
+    reference: sale.originalSaleId ? 'Against ' + sale.originalSaleId : '', fbrInvoiceNo: sale.fbrInvoiceNo || '',
+    lines: lines, discountPaisa: sale.discountPaisa || 0, netPaisa: sale.netPaisa, taxPaisa: sale.taxPaisa, grossPaisa: total, payments: paid,
+    whatsappText: text, whatsappUrl: contact.phone ? whatsappUrl(contact.phone, text) : '',
+  };
+}
+
 if (typeof module !== 'undefined') module.exports = {
   DEFAULT_TEMPLATE,
   fillTemplate,
@@ -110,4 +141,5 @@ if (typeof module !== 'undefined') module.exports = {
   paymentReceipt,
   invoiceDocument,
   paymentVoucher,
+  saleReceipt,
 };

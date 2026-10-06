@@ -51,6 +51,14 @@ function seedDemo(gas, users) {
   }).job;
   call(users.studio, 'payments.receiveAdvance', { jobId: job.id, date: today, amountPaisa: 30000000, moneyAccountCode: '1100' });
   call(users.studio, 'jobs.issueStock', { jobId: job.id, date: today, lines: [{ itemId: fabric.id, qty: 12 }, { itemId: trim.id, qty: 400 }] });
+
+  // Mirae: two SKUs from a completed batch, ready to sell.
+  const unit = call(o, 'contacts.upsert', { kind: 'VENDOR', vendorType: 'KARIGAR', name: 'Mirae stitching unit' }).contact;
+  call(o, 'items.upsert', { id: 'SKU-NOOR-S', category: 'SKU', name: 'Noor kurta S', barcode: '8960000000011', salePricePaisa: 944000, taxCodeId: 'ST-STD', collection: 'Winter 26' });
+  call(o, 'items.upsert', { id: 'SKU-NOOR-M', category: 'SKU', name: 'Noor kurta M', barcode: '8960000000028', salePricePaisa: 944000, taxCodeId: 'ST-STD', collection: 'Winter 26' });
+  const batch = call(users.studio, 'jobs.create', { type: 'RTW_BATCH', title: 'Noor run 1', collection: 'Winter 26', lines: [{ itemId: 'SKU-NOOR-S', qty: 10 }, { itemId: 'SKU-NOOR-M', qty: 10 }] }).job;
+  call(users.studio, 'karigar.logWork', { contactId: unit.id, jobId: batch.id, date: today, costComponent: 'STITCHING', pieces: 20, ratePaisa: 250000 });
+  call(users.studio, 'jobs.completeBatch', { jobId: batch.id, date: today, outputs: [{ itemId: 'SKU-NOOR-S', qty: 10 }, { itemId: 'SKU-NOOR-M', qty: 10 }] });
 }
 
 function start(opts) {

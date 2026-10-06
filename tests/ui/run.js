@@ -295,6 +295,69 @@ async function noHorizontalScroll(page) {
     await f5.waitForSelector('text=Batch output');
     await f5.waitForSelector('text=Stock count');
 
+    // ---- M6: Store sells (cash + card), returns one, checks Today, cashes up ----
+    const sp6 = (await signInAs(browser, base, 'Ali', phone)).page;
+    await sp6.waitForSelector('h1:has-text("New sale")');
+    await sp6.getByLabel('Find item').fill('8960000000011'); // scan the S barcode
+    await sp6.keyboard.press('Enter');
+    await sp6.waitForSelector('.cartline >> text=Noor kurta S');
+    await sp6.getByLabel('Find item').fill('noor kurta m');
+    await sp6.getByRole('button', { name: /Noor kurta M/ }).click();
+    await sp6.getByRole('button', { name: 'One more Noor kurta M' }).click();
+    await sp6.waitForSelector('.grandtotal:has-text("Rs 28,320")');
+    await sp6.getByRole('button', { name: 'Cash', exact: true }).click();
+    await sp6.locator('input[aria-label="Cash amount"]').fill('10000');
+    await sp6.locator('input[aria-label="Cash given"]').fill('10500');
+    await sp6.waitForSelector('text=Change to give');
+    await sp6.getByRole('button', { name: 'Card', exact: true }).click(); // defaults to what is left: 18,320
+    await sp6.getByLabel('Customer mobile').fill('0345 1112223');
+    await shot(sp6, 'new-sale');
+    await noHorizontalScroll(sp6);
+    await sp6.getByRole('button', { name: 'Complete sale' }).click();
+    await sp6.waitForSelector('text=Sale receipt');
+    await sp6.waitForSelector('text=Paid Card');
+    await shot(sp6, 'sale-receipt');
+    const sale6 = gas.rows('Sales').find((x) => x.kind === 'SALE');
+    assert.deepEqual([sale6.grossPaisa, sale6.netPaisa, sale6.taxPaisa], [2832000, 2400000, 432000]);
+    const pays6 = gas.rows('SalePayments').filter((x) => x.saleId === sale6.id).map((x) => [x.method, x.amountPaisa]);
+    assert.deepEqual(pays6, [['CASH', 1000000], ['CARD', 1832000]]);
+
+    await sp6.goto(base + '#/returns');
+    await sp6.getByLabel('Find sale').fill(sale6.id);
+    await sp6.getByRole('button', { name: 'Find', exact: true }).click();
+    await sp6.locator('tr.click', { hasText: sale6.id }).click();
+    await sp6.getByRole('button', { name: 'Return one more Noor kurta M' }).click();
+    await sp6.waitForSelector('.grandtotal:has-text("Refund Rs 9,440")');
+    await sp6.getByRole('button', { name: 'Refund card' }).click();
+    await shot(sp6, 'return');
+    await sp6.getByRole('button', { name: 'Confirm' }).click();
+    await sp6.waitForSelector('h2:has-text("Refund")');
+    const ret6 = gas.rows('Sales').find((x) => x.kind === 'RETURN');
+    assert.equal(ret6.grossPaisa, 944000);
+
+    await sp6.goto(base + '#/today');
+    await sp6.waitForSelector('text=By payment method');
+    assert.ok(await sp6.locator('td:has-text("8,880.00")').count() >= 1, 'card takings net of the refund: 18,320 - 9,440');
+    await shot(sp6, 'today');
+    await sp6.goto(base + '#/cashup');
+    await sp6.waitForSelector('text=Rs 10,000');
+    await sp6.locator('input[aria-label="Cash counted"]').fill('9,980');
+    await sp6.getByRole('button', { name: 'Submit cash-up' }).click();
+    await sp6.waitForSelector('text=short by Rs 20');
+    await noHorizontalScroll(sp6);
+
+    // ---- M6: Finance settles the card takings ----
+    const fp6 = (await signInAs(browser, base, 'Sara', { width: 1280, height: 900 })).page;
+    await fp6.goto(base + '#/store');
+    await fp6.waitForSelector('text=Card & wallet not yet in bank');
+    await fp6.getByRole('button', { name: 'Card settlement' }).click();
+    const sd = fp6.getByRole('dialog', { name: 'Card / wallet settlement' });
+    await sd.locator('input[aria-label="Fee"]').fill('177.60');
+    await sd.getByRole('button', { name: 'Save' }).click();
+    await sd.waitFor({ state: 'detached' });
+    await fp6.waitForSelector('.tile:has-text("Card & wallet not yet in bank") >> text=Rs 0');
+    await shot(fp6, 'store');
+
     console.log('ok - UI: book, advance, karigar, deliver, balance, receipts and journals (' + (SHOTS ? 'screenshots in ' + SHOTS : 'no screenshots') + ')');
   } catch (e) {
     console.error('not ok - UI test failed:', e.message);

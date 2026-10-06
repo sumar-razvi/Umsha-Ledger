@@ -112,6 +112,15 @@ table.data tfoot td { font-weight: 600; border-bottom: none; }
   .lineedit .desc { grid-column: 1 / -1; } .lineedit.head { display: none; }
 }
 
+/* store */
+.cartline { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.stepper { display: inline-flex; align-items: center; gap: 4px; }
+.stepper button { min-width: 44px; padding: 6px; }
+.stepper span { min-width: 28px; text-align: center; font-variant-numeric: tabular-nums; }
+.bigpay { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.bigpay button { min-height: 64px; font-size: 17px; }
+.grandtotal { font-family: var(--serif); font-size: 34px; font-variant-numeric: tabular-nums; text-align: right; }
+
 /* picker */
 .picker { position: relative; }
 .picker .results { position: absolute; z-index: 30; left: 0; right: 0; top: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.08); max-height: 280px; overflow-y: auto; }
@@ -539,10 +548,10 @@ const CONFIG = {
 
   // ---------- shell ----------
   const NAV = {
-    OWNER: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/soon/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Settings', '/settings']],
-    FINANCE: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/soon/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Journals', '/journals']],
+    OWNER: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Settings', '/settings']],
+    FINANCE: [['Home', '/'], ['Orders', '/orders'], ['Customers', '/customers'], ['Store', '/store'], ['Purchases', '/purchases'], ['Inventory', '/inventory'], ['Banking', '/soon/banking'], ['Reports', '/soon/reports'], ['Journals', '/journals']],
     STUDIO: [['Orders', '/orders'], ['Customers', '/customers'], ['Inventory', '/inventory'], ['Batches', '/batches'], ['Karigars', '/karigars']],
-    STORE: [['New sale', '/soon/sale'], ['Returns', '/soon/returns'], ['Today', '/soon/today'], ['Cash-up', '/soon/cashup'], ['Petty expense', '/purchases/expense']],
+    STORE: [['New sale', '/sale'], ['Returns', '/returns'], ['Today', '/today'], ['Cash-up', '/cashup'], ['Petty expense', '/purchases/expense']],
     VIEWER: [['Reports', '/soon/reports'], ['Journals', '/journals']],
   };
   function renderShell(path) {
@@ -1000,7 +1009,7 @@ const CONFIG = {
   // ---------- receipts and invoices ----------
   route('/receipts/:type/:id', async (view, [type, id]) => {
     const r = await api('receipts.render', { docType: type, docId: id });
-    let thermal = false;
+    let thermal = r.kind === 'SALE';
     const doc = h('div', { class: 'doc' });
     function draw() {
       clear(doc);
@@ -1008,8 +1017,18 @@ const CONFIG = {
       doc.appendChild(h('div', { class: 'dochead' },
         h('div', {}, h('div', { class: 'co' }, r.company.name), r.company.ntn ? h('div', { class: 'small muted' }, 'NTN ' + r.company.ntn) : null, r.company.strn ? h('div', { class: 'small muted' }, 'STRN ' + r.company.strn) : null),
         h('div', { style: 'text-align:' + (thermal ? 'left' : 'right') }, h('h2', { style: 'margin:0' }, r.title), h('div', {}, r.number), h('div', { class: 'muted' }, fmtDate(r.date)))));
-      doc.appendChild(h('p', {}, h('span', { class: 'muted' }, r.kind === 'INVOICE' ? 'Bill to ' : r.kind === 'VOUCHER' ? 'Paid to ' : 'Received from '), h('strong', {}, r.to.name || '—'), r.reference && r.kind !== 'VOUCHER' ? h('div', { class: 'muted small' }, r.reference) : null));
-      if (r.kind === 'VOUCHER') {
+      if (r.kind !== 'SALE' || r.to.name || r.reference) doc.appendChild(h('p', {}, r.kind === 'SALE' && !r.to.name ? '' : h('span', { class: 'muted' }, r.kind === 'INVOICE' ? 'Bill to ' : r.kind === 'VOUCHER' ? 'Paid to ' : r.kind === 'SALE' ? 'Customer ' : 'Received from '), r.kind === 'SALE' && !r.to.name ? '' : h('strong', {}, r.to.name || '—'), r.reference && r.kind !== 'VOUCHER' ? h('div', { class: 'muted small' }, r.reference) : null));
+      if (r.kind === 'SALE') {
+        if (r.store) doc.appendChild(h('p', { class: 'small muted', style: 'margin-top:-8px' }, r.store));
+        r.lines.forEach((l) => doc.appendChild(h('div', { class: 'kv', style: 'padding:4px 0' }, h('span', {}, l.label, ' × ', Math.abs(l.qty), l.discountPaisa ? h('span', { class: 'muted small' }, ' (less ' + rs(l.discountPaisa) + ')') : ''), h('span', { class: 'v' }, rs(l.amountPaisa)))));
+        const kv = h('div', { class: 'kv', style: 'margin-top:8px' });
+        kv.append(h('span', { class: 'total' }, r.saleKind === 'RETURN' ? 'Refund' : 'Total'), h('span', { class: 'v total' }, rs(Math.abs(r.grossPaisa))),
+          h('span', { class: 'muted small' }, 'includes sales tax'), h('span', { class: 'v muted small' }, rs(Math.abs(r.taxPaisa))));
+        r.payments.forEach((p) => kv.append(h('span', {}, (p.amountPaisa < 0 ? 'Refunded ' : 'Paid ') + PAY_LABEL[p.method]), h('span', { class: 'v' }, rs(Math.abs(p.amountPaisa)))));
+        doc.appendChild(kv);
+        if (r.fbrInvoiceNo) doc.appendChild(h('p', { class: 'small muted' }, 'FBR invoice ' + r.fbrInvoiceNo));
+        if (r.saleKind === 'SALE') doc.appendChild(h('p', { class: 'small muted' }, 'Exchanges within 14 days with this receipt.'));
+      } else if (r.kind === 'VOUCHER') {
         if (r.to.cnic || r.to.ntn) doc.appendChild(h('p', { class: 'small muted', style: 'margin-top:-8px' }, [r.to.cnic ? 'CNIC ' + r.to.cnic : '', r.to.ntn ? 'NTN ' + r.to.ntn : '', r.to.filerStatus ? (r.to.filerStatus === 'FILER' ? 'Filer' : 'Non-filer') : ''].filter(Boolean).join(' · ')));
         if (r.lines.length) doc.appendChild(dataTable([{ key: 'label', label: 'Bill' }, { key: 'amountPaisa', label: 'Settled', money: true }, { key: 'whtPaisa', label: 'Tax withheld', money: true }], r.lines));
         const kv = h('div', { class: 'kv', style: 'margin-top:12px' });
@@ -1042,6 +1061,7 @@ const CONFIG = {
       r.whatsappUrl ? h('a', { class: 'btn primary', href: r.whatsappUrl, target: '_blank', rel: 'noopener' }, 'Send on WhatsApp') : null,
       h('button', { type: 'button', onclick: () => window.print() }, 'Print'),
       h('button', { type: 'button', onclick: () => { thermal = !thermal; draw(); } }, 'Receipt printer size'),
+      r.kind === 'SALE' && can('sale.create') ? h('a', { class: 'btn', href: '#/sale' }, 'New sale') : null,
       history.length > 1 ? h('button', { type: 'button', class: 'ghost', onclick: () => history.back() }, 'Back') : null));
     view.appendChild(doc);
     if (r.whatsappUrl) view.appendChild(h('p', { class: 'muted small noprint' }, 'WhatsApp opens with the message ready. To send the printed copy, use Print → Save as PDF and attach it.'));
@@ -1878,8 +1898,345 @@ const CONFIG = {
     ]);
   }
 
+
+  // ---------- store (M6) ----------
+  const PAY_LABEL = { CASH: 'Cash', CARD: 'Card', BANK: 'Bank / Raast', WALLET: 'Wallet', STORE_CREDIT: 'Store credit' };
+  function payAccount(method) {
+    if (method === 'CASH') return state.settings.storeCashAccount || '1020';
+    if (method === 'CARD') return (state.accounts.find((a) => a.systemKey === 'CARD_CLEARING') || {}).code || '1210';
+    if (method === 'WALLET') return state.settings.walletAccount || '1120';
+    if (method === 'STORE_CREDIT') return (state.accounts.find((a) => a.systemKey === 'STORE_CREDIT') || {}).code || '2110';
+    return '1100';
+  }
+  const pricesIncludeTax = () => String(state.settings.rtwPricesIncludeTax).toUpperCase() === 'TRUE';
+  // Net and tax of cart lines, exactly as the server will post them (R11).
+  function cartTotals(lines) {
+    const amounts = lines.map((l) => Inventory.qtyTimesPaisa(l.qty, l.unitPricePaisa) - (l.discountPaisa || 0));
+    const codes = lines.map((l) => { const t = taxCodeAt(l.taxCodeId, today()); return t ? { id: t.id, rateBps: Number(t.rateBps || 0) } : null; });
+    if (pricesIncludeTax()) {
+      const r = Posting.inclusiveTax(amounts, codes);
+      const gross = amounts.reduce((a, b) => a + b, 0);
+      return { gross, tax: r.taxes.reduce((a, b) => a + b, 0), net: r.nets.reduce((a, b) => a + b, 0) };
+    }
+    const taxes = Posting.exclusiveTax(amounts, codes);
+    const net = amounts.reduce((a, b) => a + b, 0);
+    const tax = taxes.reduce((a, b) => a + b, 0);
+    return { gross: net + tax, tax, net };
+  }
+  // The cart widget, shared by New sale and exchanges.
+  function cartWidget(onChange) {
+    const cart = [];
+    const wrap = h('div');
+    const search = h('input', { type: 'search', placeholder: 'Scan barcode or type SKU / name', autocomplete: 'off', 'aria-label': 'Find item' });
+    const results = h('div');
+    const list = h('div');
+    let timer = null;
+    async function find() {
+      const q = search.value.trim();
+      clear(results);
+      if (!q) return;
+      const items = await api('items.search', { q, category: 'SKU', limit: 8 });
+      if (items.length === 1 && items[0].barcode === q) { addItem(items[0]); search.value = ''; return; }
+      items.forEach((i) => results.appendChild(h('button', { type: 'button', style: 'width:100%;justify-content:space-between;margin-bottom:6px', disabled: !(i.qty > 0), onclick: () => { addItem(i); search.value = ''; clear(results); search.focus(); } },
+        h('span', {}, i.name, h('span', { class: 'muted small' }, ' · ' + i.id)), h('span', {}, rs(i.salePricePaisa || 0), h('span', { class: 'muted small' }, ' · ' + i.qty + ' left')))));
+      if (!items.length) results.appendChild(h('div', { class: 'muted small' }, 'No SKU matches "' + q + '".'));
+    }
+    search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(find, 200); });
+    search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { clearTimeout(timer); find(); } });
+    function addItem(i) {
+      const line = cart.find((l) => l.itemId === i.id);
+      if (line) { if (line.qty < i.qty) line.qty++; else toast('Only ' + i.qty + ' of ' + i.name + ' in stock', 'bad'); }
+      else cart.push({ itemId: i.id, name: i.name, qty: 1, stock: i.qty, unitPricePaisa: i.salePricePaisa || 0, discountPaisa: 0, taxCodeId: i.taxCodeId });
+      draw();
+    }
+    function draw(silent) {
+      clear(list);
+      cart.forEach((l, idx) => {
+        const minus = h('button', { type: 'button', 'aria-label': 'One less ' + l.name, onclick: () => { l.qty--; if (l.qty <= 0) cart.splice(idx, 1); if (l.discountPaisa > Inventory.qtyTimesPaisa(l.qty, l.unitPricePaisa)) l.discountPaisa = 0; draw(); } }, '−');
+        const plus = h('button', { type: 'button', 'aria-label': 'One more ' + l.name, onclick: () => { if (l.qty < l.stock) l.qty++; else toast('Only ' + l.stock + ' in stock', 'bad'); draw(); } }, '+');
+        const disc = h('button', { type: 'button', class: 'ghost', style: 'min-height:32px;padding:2px 6px', onclick: () => discountSheet(l) }, l.discountPaisa ? 'less ' + rs(l.discountPaisa) : 'Discount');
+        list.appendChild(h('div', { class: 'cartline' }, h('span', {}, h('strong', {}, l.name), h('div', { class: 'muted small' }, rs(l.unitPricePaisa) + ' each'), disc),
+          h('span', { style: 'text-align:right' }, h('div', { class: 'num' }, rs(Inventory.qtyTimesPaisa(l.qty, l.unitPricePaisa) - l.discountPaisa)), h('span', { class: 'stepper' }, minus, h('span', {}, l.qty), plus))));
+      });
+      if (!cart.length) list.appendChild(h('div', { class: 'empty' }, 'Scan or search to add items.'));
+      if (!silent && onChange) onChange();
+    }
+    function discountSheet(l) {
+      const amt = moneyInput({ label: 'Discount', value: l.discountPaisa || null });
+      sheet('Discount on ' + l.name, field('Discount on this line (Rs)', amt), (close) => [h('button', { type: 'button', onclick: close }, 'Cancel'),
+        h('button', { type: 'button', class: 'primary', onclick: () => { try { const v = amt.value() || 0; if (v > Inventory.qtyTimesPaisa(l.qty, l.unitPricePaisa)) { toast('Discount is more than the line', 'bad'); return; } l.discountPaisa = v; close(); draw(); } catch (e) { toast(e.message, 'bad'); } } }, 'Apply')]);
+    }
+    wrap.discountAll = () => {
+      if (!cart.length) return;
+      const amt = moneyInput({ label: 'Discount' });
+      sheet('Discount on the whole sale', field('Discount (Rs)', amt), (close) => [h('button', { type: 'button', onclick: close }, 'Cancel'),
+        h('button', { type: 'button', class: 'primary', onclick: () => {
+          try {
+            const v = amt.value() || 0;
+            const room = cart.map((l) => Inventory.qtyTimesPaisa(l.qty, l.unitPricePaisa) - l.discountPaisa);
+            if (v > room.reduce((a, b) => a + b, 0)) { toast('Discount is more than the sale', 'bad'); return; }
+            const shares = Money.splitProRata(v, room);
+            cart.forEach((l, i) => { l.discountPaisa += shares[i]; });
+            close(); draw();
+          } catch (e) { toast(e.message, 'bad'); }
+        } }, 'Apply')]);
+    };
+    wrap.lines = () => cart.map((l) => ({ itemId: l.itemId, qty: l.qty, unitPricePaisa: l.unitPricePaisa, discountPaisa: l.discountPaisa, taxCodeId: l.taxCodeId }));
+    wrap.clear = () => { cart.length = 0; draw(); };
+    wrap.append(search, results, list);
+    draw(true); // the caller is still being set up: no onChange yet
+    return wrap;
+  }
+
+  // Split payment panel: big method buttons, amounts, change due for cash.
+  function paymentPanel(getDue, onChange) {
+    const rows = [];
+    const wrap = h('div');
+    const box = h('div');
+    const remainingEl = h('div', { class: 'kv' });
+    function addPay(method) {
+      const due = getDue() - paid();
+      const amt = moneyInput({ label: PAY_LABEL[method] + ' amount', value: Math.max(0, due), onChange: update });
+      const given = method === 'CASH' ? moneyInput({ label: 'Cash given', placeholder: 'Cash given (optional)', onChange: update }) : null;
+      const ref = method === 'CASH' ? null : h('input', { placeholder: method === 'CARD' ? 'Last 4 digits / slip' : 'Reference', 'aria-label': PAY_LABEL[method] + ' reference' });
+      const row = { method, amt, given, ref };
+      const el = h('div', { class: 'card', style: 'background:var(--bg);padding:12px' }, h('div', { class: 'kv' }, h('strong', {}, PAY_LABEL[method]),
+        h('button', { type: 'button', class: 'ghost', style: 'min-height:32px', onclick: () => { rows.splice(rows.indexOf(row), 1); el.remove(); update(); } }, 'Remove')),
+        h('div', { class: 'row' }, field('Amount', amt), given ? field('Cash given', given) : field('Reference', ref)));
+      rows.push(row); box.appendChild(el); update();
+    }
+    function paid() { return rows.reduce((t, r) => { try { return t + (r.amt.value() || 0); } catch (e) { return t; } }, 0); }
+    function update() {
+      const due = getDue();
+      const left = due - paid();
+      clear(remainingEl).append(h('span', {}, left >= 0 ? 'Still to pay' : 'Paid more than the total'), h('span', { class: 'v' + (left ? ' bad-text' : '') }, rs(Math.abs(left))));
+      const cash = rows.find((r) => r.method === 'CASH');
+      if (cash) {
+        let g = null; try { g = cash.given.value(); } catch (e) { g = null; }
+        let a = 0; try { a = cash.amt.value() || 0; } catch (e) { a = 0; }
+        if (g) remainingEl.append(h('span', { class: 'total' }, 'Change to give'), h('span', { class: 'v total' }, rs(Math.max(0, g - a))));
+      }
+      onChange && onChange(left);
+    }
+    wrap.append(h('div', { class: 'bigpay' }, ['CASH', 'CARD', 'BANK', 'WALLET'].map((m) => h('button', { type: 'button', onclick: () => addPay(m) }, PAY_LABEL[m]))), box, remainingEl);
+    wrap.value = () => rows.map((r) => ({ method: r.method, accountCode: payAccount(r.method), amountPaisa: r.amt.value() || 0, reference: r.ref ? r.ref.value : '' })).filter((p) => p.amountPaisa > 0);
+    wrap.remaining = () => getDue() - paid();
+    wrap.refresh = update;
+    return wrap;
+  }
+
+  route('/sale', async (view) => {
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'New sale')));
+    const box = h('div');
+    const channel = h('select', { 'aria-label': 'Channel' }, [['STORE', 'In store'], ['ONLINE', 'Online'], ['EXHIBITION', 'Exhibition']].map(([v, l]) => h('option', { value: v }, l)));
+    const totalEl = h('div', { class: 'grandtotal' });
+    const taxEl = h('div', { class: 'muted small', style: 'text-align:right' });
+    let pay = null;
+    function updateTotals() {
+      const t = cartTotals(cart.lines());
+      totalEl.textContent = rs(t.gross);
+      taxEl.textContent = pricesIncludeTax() ? 'includes sales tax ' + rs(t.tax) : 'sales tax ' + rs(t.tax) + ' added';
+      if (pay) pay.refresh();
+    }
+    const cart = cartWidget(updateTotals);
+    updateTotals();
+    const phone = h('input', { type: 'tel', inputMode: 'tel', placeholder: 'Customer mobile for WhatsApp receipt (optional)', 'aria-label': 'Customer mobile' });
+    const custName = h('input', { placeholder: 'Name (for new customers)', 'aria-label': 'Customer name' });
+    pay = paymentPanel(() => cartTotals(cart.lines()).gross, (left) => { confirm.disabled = left !== 0 || !cart.lines().length; });
+    const confirm = h('button', { type: 'button', class: 'primary', style: 'width:100%;min-height:56px;font-size:17px', disabled: true }, 'Complete sale');
+    view.appendChild(h('div', { class: 'card' }, box, cart, h('div', { class: 'actions', style: 'justify-content:space-between;margin-top:8px' }, h('button', { type: 'button', class: 'ghost', onclick: () => cart.discountAll() }, 'Discount on whole sale'), h('div', { style: 'flex:0 0 150px' }, channel)),
+      totalEl, taxEl));
+    view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Payment'), pay));
+    view.appendChild(h('div', { class: 'card' }, h('div', { class: 'row' }, field('Customer mobile', phone), field('Name', custName))));
+    view.appendChild(confirm);
+    confirm.addEventListener('click', async () => {
+      try {
+        let contactId = '';
+        if (phone.value.trim()) {
+          const found = await api('contacts.search', { q: phone.value, kind: 'CUSTOMER' });
+          if (found.length) contactId = found[0].id;
+          else {
+            const c = await save('contacts.upsert', { kind: 'CUSTOMER', name: custName.value.trim() || 'Walk-in customer', phone: phone.value }, 'Customer ' + phone.value);
+            contactId = c.contact.id;
+          }
+        }
+        const r = await submitting(confirm, box, () => save('sale.create', { date: today(), channel: channel.value, store: state.me.store, contactId, lines: cart.lines(), payments: pay.value() }, 'Sale'));
+        if (r) { toast('Sale ' + r.saleId + ': ' + rs(r.grossPaisa)); go('#/receipts/SALE/' + r.saleId); }
+      } catch (e) { box.scrollIntoView(); }
+    });
+  });
+
+  // What returning qty of a sold line refunds, exactly as the server posts it (R12).
+  function returnValue(line, qty) {
+    const sold = Inventory.toMilli(line.qty);
+    const done = Inventory.toMilli(line.returnedQty || 0);
+    const qm = Inventory.toMilli(qty);
+    const left = sold - done;
+    const part = (total, already) => (qm === left ? total - (already || 0) : Money.divRoundHalfEven(BigInt(total) * BigInt(qm), sold));
+    return qm <= 0 ? 0 : part(line.netPaisa, line.returnedNetPaisa) + part(line.taxPaisa, line.returnedTaxPaisa);
+  }
+
+  route('/returns', async (view, args, params) => {
+    view.appendChild(h('h1', {}, 'Returns and exchanges'));
+    const q = h('input', { type: 'search', placeholder: 'Receipt no. (SALE-…), customer name or mobile', value: params.get('q') || '', 'aria-label': 'Find sale' });
+    const date = h('input', { type: 'date', value: params.get('date') || '' });
+    const list = h('div');
+    async function find() {
+      const sales = (await api('sales.list', { q: q.value, date: date.value, limit: 30 })).filter((x) => x.kind !== 'RETURN' && x.status !== 'VOID');
+      clear(list).appendChild(dataTable([
+        { key: 'id', label: 'Receipt' }, { key: 'date', label: 'Date', render: (x) => fmtDate(x.date) }, { key: 'contactName', label: 'Customer', opt: true },
+        { key: 'grossPaisa', label: 'Total', money: true },
+      ], sales, { onRow: (x) => go('#/returns/' + x.id), empty: 'No sales found. Try the receipt number.' }));
+    }
+    q.addEventListener('keydown', (e) => { if (e.key === 'Enter') find(); });
+    view.appendChild(h('div', { class: 'card' }, h('div', { class: 'row' }, field('Find the sale', q), field('Date', date)), h('button', { type: 'button', class: 'primary', onclick: find }, 'Find'), list));
+    if (q.value || date.value) find();
+  });
+
+  route('/returns/:id', async (view, [id]) => {
+    const d = await api('sales.get', { id });
+    const sale = d.sale;
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Return from ' + sale.id), h('span', { class: 'muted' }, fmtDate(sale.date))));
+    const box = h('div');
+    const rows = d.lines.filter((l) => l.qty > 0).map((l) => ({ line: l, returnable: Inventory.fromMilli(Inventory.toMilli(l.qty) - Inventory.toMilli(l.returnedQty || 0)), qty: 0, restock: h('input', { type: 'checkbox', checked: true, style: 'width:22px;min-height:22px', 'aria-label': 'Back on the shelf' }) }));
+    const totalEl = h('div', { class: 'grandtotal' });
+    const lineBox = h('div');
+    let exch = null;
+    let pay = null;
+    let refundMethod = d.payments.length && d.payments[0].amountPaisa > 0 ? d.payments[0].method : 'CASH';
+    const refundBtns = h('div', { class: 'bigpay' });
+    function refundTotal() { return rows.reduce((t, r) => t + returnValue(r.line, r.qty), 0); }
+    function exchangeTotal() { return exch ? cartTotals(exch.lines()).gross : 0; }
+    function draw() {
+      clear(lineBox);
+      rows.forEach((r) => {
+        lineBox.appendChild(h('div', { class: 'cartline' }, h('span', {}, h('strong', {}, r.line.itemName), h('div', { class: 'muted small' }, 'bought ' + r.line.qty + (r.line.returnedQty ? ', returned ' + r.line.returnedQty : '') + ' · ' + rs(r.line.netPaisa + r.line.taxPaisa)),
+          r.returnable > 0 ? h('label', { class: 'small', style: 'display:flex;gap:6px;align-items:center' }, r.restock, 'Back on the shelf') : null),
+          h('span', { style: 'text-align:right' }, h('div', { class: 'num' }, rs(returnValue(r.line, r.qty))),
+            r.returnable > 0 ? h('span', { class: 'stepper' }, h('button', { type: 'button', 'aria-label': 'Return one less', onclick: () => { r.qty = Math.max(0, r.qty - 1); draw(); } }, '−'), h('span', {}, r.qty),
+              h('button', { type: 'button', 'aria-label': 'Return one more ' + r.line.itemName, onclick: () => { r.qty = Math.min(r.returnable, r.qty + 1); draw(); } }, '+')) : h('span', { class: 'muted small' }, 'all returned'))));
+      });
+      const diff = exchangeTotal() - refundTotal();
+      totalEl.textContent = exch ? (diff >= 0 ? 'Customer pays ' + rs(diff) : 'Refund ' + rs(-diff)) : 'Refund ' + rs(refundTotal());
+      if (pay) pay.refresh();
+      clear(refundBtns);
+      if (!exch || diff < 0) ['CASH', 'CARD', 'BANK', 'STORE_CREDIT'].forEach((m) => refundBtns.appendChild(h('button', { type: 'button', class: m === refundMethod ? 'primary' : '', onclick: () => { refundMethod = m; draw(); } }, 'Refund ' + PAY_LABEL[m].toLowerCase())));
+    }
+    const exchangeBtn = h('button', { type: 'button', class: 'ghost', onclick: () => {
+      exch = cartWidget(draw);
+      pay = paymentPanel(() => Math.max(0, exchangeTotal() - refundTotal()), () => {});
+      exchangeBtn.replaceWith(h('div', { class: 'card' }, h('h2', {}, 'Exchange for'), exch, h('h3', {}, 'If the new items cost more'), pay));
+      draw();
+    } }, 'Exchange for something else instead');
+    const submit = h('button', { type: 'button', class: 'primary', style: 'width:100%;min-height:56px;font-size:17px' }, 'Confirm');
+    view.appendChild(h('div', { class: 'card' }, box, lineBox, totalEl, refundBtns));
+    view.appendChild(exchangeBtn);
+    view.appendChild(submit);
+    draw();
+    submit.addEventListener('click', async () => {
+      try {
+        const ret = rows.filter((r) => r.qty > 0).map((r) => ({ saleLineId: r.line.id, qty: r.qty, restock: r.restock.checked }));
+        const refund = refundTotal();
+        let r;
+        if (exch && exch.lines().length) {
+          const diff = exchangeTotal() - refund;
+          const payload = { originalSaleId: sale.id, date: today(), store: state.me.store, returnLines: ret, newLines: exch.lines(), payments: [], refund: [] };
+          if (diff > 0) payload.payments = pay.value();
+          if (diff < 0) payload.refund = [{ method: refundMethod, accountCode: payAccount(refundMethod), amountPaisa: -diff }];
+          r = await submitting(submit, box, () => save('sale.exchange', payload, 'Exchange on ' + sale.id));
+        } else {
+          r = await submitting(submit, box, () => save('sale.return', { originalSaleId: sale.id, date: today(), lines: ret, refund: refund ? [{ method: refundMethod, accountCode: payAccount(refundMethod), amountPaisa: refund }] : [] }, 'Return on ' + sale.id));
+        }
+        if (r) { toast('Done: ' + r.saleId); go('#/receipts/SALE/' + r.saleId); }
+      } catch (e) { box.scrollIntoView(); }
+    });
+  });
+
+  route('/today', async (view, args, params) => {
+    const date = params.get('date') || today();
+    const storeSel = state.me.role === 'STORE' ? state.me.store : params.get('store') || '';
+    const d = await api('reports.dailySales', { date, store: storeSel });
+    const dateIn = h('input', { type: 'date', value: date });
+    dateIn.addEventListener('change', () => go('#/today?date=' + dateIn.value + (storeSel && state.me.role !== 'STORE' ? '&store=' + storeSel : '')));
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, date === today() ? 'Today' : fmtDate(date)), h('span', { class: 'muted' }, d.store || 'All stores'), h('div', { style: 'flex:0 0 180px' }, dateIn)));
+    view.appendChild(h('div', { class: 'tiles' }, tile('Sales', rs(d.totals.salesGrossPaisa)), tile('Returns', rs(d.totals.returnsGrossPaisa)),
+      tile('Transactions', d.totals.transactions), tile('Net (excl. tax)', rs(d.totals.netPaisa)), d.totals.costPaisa !== undefined ? tile('Gross margin', rs(d.totals.netPaisa - d.totals.costPaisa)) : null));
+    view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'By payment method'), dataTable([{ key: 'm', label: 'Method' }, { key: 'v', label: 'Amount', money: true }],
+      Object.keys(d.byMethod).map((m) => ({ m: PAY_LABEL[m] || m, v: d.byMethod[m] })), { empty: 'No takings yet.' })));
+    view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Receipts'), dataTable([
+      { key: 'id', label: 'Receipt' }, { key: 'kind', label: 'Type', render: (x) => ({ SALE: 'Sale', RETURN: 'Return', EXCHANGE: 'Exchange' }[x.kind]) },
+      { key: 'contactName', label: 'Customer', opt: true }, { key: 'grossPaisa', label: 'Amount', money: true },
+    ], d.sales, { onRow: (x) => go('#/receipts/SALE/' + x.id), csv: 'sales-' + date })));
+  });
+
+  route('/cashup', async (view) => {
+    view.appendChild(h('h1', {}, 'Cash-up'));
+    const p = await api('cashup.preview', { date: today(), store: state.me.store });
+    if (p.alreadyDone.length) {
+      const c = p.alreadyDone[0];
+      view.appendChild(h('div', { class: 'notice ' + (c.diffPaisa ? '' : 'ok') }, 'Today\'s cash-up is done. Counted ' + rs(c.countedCashPaisa) + ' against ' + rs(c.expectedCashPaisa) + (c.diffPaisa ? (c.diffPaisa > 0 ? ': over by ' : ': short by ') + rs(Math.abs(c.diffPaisa)) : ': exact.')));
+      return;
+    }
+    const box = h('div');
+    const counted = moneyInput({ label: 'Cash counted' });
+    const notes = h('textarea', { placeholder: 'Anything to explain?' });
+    const submit = h('button', { type: 'button', class: 'primary', style: 'width:100%;min-height:56px' }, 'Submit cash-up');
+    view.appendChild(h('div', { class: 'card' }, box, h('div', { class: 'kv' }, h('span', {}, 'Cash that should be in the drawer'), h('span', { class: 'v grandtotal', style: 'font-size:26px' }, rs(p.expectedCashPaisa)),
+      h('span', { class: 'muted' }, 'Card and wallet today'), h('span', { class: 'v muted' }, rs(p.expectedCardPaisa))),
+      h('p', { class: 'small muted' }, 'Count the cash in the drawer, then type it in.'), field('Cash counted', counted), field('Notes', notes), submit));
+    submit.addEventListener('click', async () => {
+      try {
+        const r = await submitting(submit, box, () => save('cashup.submit', { date: today(), store: state.me.store, countedCashPaisa: counted.value(), notes: notes.value }, 'Cash-up'));
+        if (r) { toast(r.diffPaisa === 0 ? 'Cash-up done: exact' : 'Cash-up done: ' + (r.diffPaisa > 0 ? 'over ' : 'short ') + rs(Math.abs(r.diffPaisa))); render(); }
+      } catch (e) { /* shown */ }
+    });
+  });
+
+  route('/store', async (view) => {
+    view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, 'Store'), h('div', { class: 'actions' },
+      can('sale.create') ? h('a', { class: 'btn primary', href: '#/sale' }, 'New sale') : null, h('a', { class: 'btn', href: '#/returns' }, 'Returns'), h('a', { class: 'btn', href: '#/today' }, 'Day\'s sales'),
+      can('settlements.create') ? h('button', { type: 'button', onclick: settleSheet }, 'Card settlement') : null,
+      can('transfers.create') ? h('button', { type: 'button', onclick: depositSheet }, 'Deposit cash') : null)));
+    const [clearing, cash] = await Promise.all([api('ledger.account', { accountCode: payAccount('CARD') }), api('ledger.account', { accountCode: payAccount('CASH') })]);
+    view.appendChild(h('div', { class: 'tiles' }, tile('Store cash', rs(cash.closingPaisa)), tile('Card & wallet not yet in bank', rs(clearing.closingPaisa))));
+    const d = await api('reports.dailySales', { date: today() });
+    view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Today'), h('div', { class: 'tiles' }, tile('Sales', rs(d.totals.salesGrossPaisa)), tile('Transactions', d.totals.transactions), tile('Net (excl. tax)', rs(d.totals.netPaisa)))));
+    async function settleSheet() {
+      const box = h('div');
+      const gross = moneyInput({ label: 'Amount settled', value: clearing.closingPaisa });
+      const fee = moneyInput({ label: 'Fee' });
+      const bank = moneyAccountSelect('1100');
+      const date = h('input', { type: 'date', value: today() });
+      sheet('Card / wallet settlement', h('div', {}, box, h('p', { class: 'muted small' }, 'From the bank statement: how much the card company settled before fees, and the fee they kept.'),
+        field('Amount settled (before fee)', gross), field('Fee', fee), h('div', { class: 'row' }, field('Into', bank), field('Date', date))), (close) => [
+        h('button', { type: 'button', onclick: close }, 'Cancel'),
+        h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+          try {
+            const r = await submitting(e.currentTarget, box, () => save('settlements.create', { date: date.value, clearingCode: payAccount('CARD'), bankCode: bank.value, grossPaisa: gross.value(), feePaisa: fee.value() || 0 }, 'Card settlement'));
+            close(); if (r) { toast('Settled ' + rs(r.grossPaisa) + ', fee ' + rs(r.feePaisa)); render(); }
+          } catch (err) { /* shown */ }
+        } }, 'Save'),
+      ]);
+    }
+    function depositSheet() {
+      const box = h('div');
+      const amt = moneyInput({ label: 'Amount' });
+      const bank = moneyAccountSelect('1100');
+      const date = h('input', { type: 'date', value: today() });
+      sheet('Deposit store cash', h('div', {}, box, field('Amount', amt), h('div', { class: 'row' }, field('Into', bank), field('Date', date))), (close) => [
+        h('button', { type: 'button', onclick: close }, 'Cancel'),
+        h('button', { type: 'button', class: 'primary', onclick: async (e) => {
+          try {
+            const r = await submitting(e.currentTarget, box, () => save('transfers.create', { date: date.value, fromCode: payAccount('CASH'), toCode: bank.value, amountPaisa: amt.value() }, 'Cash deposit'));
+            close(); if (r) { toast('Deposited'); render(); }
+          } catch (err) { /* shown */ }
+        } }, 'Save'),
+      ]);
+    }
+  });
+
   // ---------- modules not built yet ----------
-  const SOON = { store: ['Store', 'M6'], sale: ['New sale', 'M6'], returns: ['Returns', 'M6'], today: ['Today', 'M6'], cashup: ['Cash-up', 'M6'], banking: ['Banking', 'M8'], reports: ['Reports', 'M7'] };
+  const SOON = { banking: ['Banking', 'M8'], reports: ['Reports', 'M7'] };
   route('/soon/:what', async (view, [what]) => {
     const s = SOON[what] || [what, 'a later milestone'];
     view.appendChild(h('h1', {}, s[0]));

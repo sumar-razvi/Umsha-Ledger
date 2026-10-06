@@ -48,6 +48,7 @@ const MATRIX = {
   'sales.list': ['OFT', false],
   'sales.get': ['OFT', false],
   'cashup.submit': ['OFT', true],
+  'cashup.preview': ['OFT', false],
   'invoices.get': ['OFSV', false],
   'invoices.list': ['OFSV', false],
   'receipts.render': ['OFST', false],
