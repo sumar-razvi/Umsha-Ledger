@@ -1,0 +1,17 @@
+{
+  "name": "umsha-ledger",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Double-entry accounting and operations for UMSHA and Mirae",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "build": "node scripts/build-core.js",
+    "perf": "node scripts/perf.js",
+    "test:ui": "node tests/ui/run.js",
+    "serve": "node scripts/dev-server.js"
+  }
+}

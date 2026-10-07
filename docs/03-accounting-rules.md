@@ -15,6 +15,8 @@ This is the most important document. `core/posting.js` implements exactly these 
 - When a movement takes an item's quantity to exactly zero, its value is the item's **entire remaining value** (not qty × avg), so no paisa are stranded in stock.
 - Tax-inclusive documents compute N and T at document level, then split N and T to lines with `splitProRata` weighted by line gross (needed for per-SKU margin).
 - WHT on partial payments with `whtBase = EXCL_SALES_TAX`: `base = round(paid × billNet / billGross)`.
+- Issues, sales and shortfalls go out at the current average and leave the average unchanged. Receipts (purchases, batch output, returns at original cost, surpluses) and reversals that take stock out at original cost recompute the average from value ÷ qty. The same rule drives live posting and `rebuildItemBalances()`, so the two always agree.
+- All products and quotients of money use exact integer arithmetic (`divRoundHalfEven` over BigInt), never floating point.
 
 ## 2. Chart of accounts structure
 
@@ -59,6 +61,10 @@ Full seed in `seed/chart_of_accounts.csv`. Ranges:
 | `CASH_OVER_SHORT` | 6810 | Cash over / short |
 | `FX_GAIN_LOSS` | 7010 | Exchange gain / loss |
 | `ROUNDING` | 7030 | Rounding differences |
+| `RTW_SALES_STORE` | 4100 | RTW sales: store |
+| `RTW_SALES_ONLINE` | 4110 | RTW sales: online |
+| `RTW_SALES_EXHIBITION` | 4120 | RTW sales: exhibitions |
+| `COGS_FABRIC` … `COGS_OTHER` | 5010–5070 | COGS by job cost component (table below) |
 
 Each item category maps to an inventory account (`FABRIC→INV_FABRIC`, `TRIM→INV_TRIMS`, `PACKAGING→INV_PACKAGING`, `SKU→INV_FG`).
 
@@ -66,15 +72,17 @@ Each item category maps to an inventory account (`FABRIC→INV_FABRIC`, `TRIM→
 
 When a job's WIP is released, each cost line keeps its `costComponent` and goes to the matching COGS account. This gives a COGS breakdown on the P&L for free.
 
-| costComponent | COGS account |
-|---|---|
-| `FABRIC` | 5010 Fabric consumed |
-| `TRIMS` | 5020 Trims & embellishments consumed |
-| `EMBROIDERY` | 5030 Embroidery labour (karigar) |
-| `STITCHING` | 5040 Stitching & tailoring labour |
-| `OUTSOURCED` | 5050 Dyeing, printing & outsourced work |
-| `PACKAGING` | 5060 Packaging |
-| `OTHER` | 5070 Other direct costs |
+| costComponent | systemKey | Default COGS account |
+|---|---|---|
+| `FABRIC` | `COGS_FABRIC` | 5010 Fabric consumed |
+| `TRIMS` | `COGS_TRIMS` | 5020 Trims & embellishments consumed |
+| `EMBROIDERY` | `COGS_EMBROIDERY` | 5030 Embroidery labour (karigar) |
+| `STITCHING` | `COGS_STITCHING` | 5040 Stitching & tailoring labour |
+| `OUTSOURCED` | `COGS_OUTSOURCED` | 5050 Dyeing, printing & outsourced work |
+| `PACKAGING` | `COGS_PACKAGING` | 5060 Packaging |
+| `OTHER` | `COGS_OTHER` | 5070 Other direct costs |
+
+Issuing stock to a job sets `costComponent` from the item category: `FABRIC→FABRIC`, `TRIM→TRIMS`, `PACKAGING→PACKAGING`. RTW sales accounts are picked by channel: `STORE→RTW_SALES_STORE`, `ONLINE→RTW_SALES_ONLINE`, `EXHIBITION→RTW_SALES_EXHIBITION`.
 
 ## 3. Brand segment rules
 
@@ -92,7 +100,7 @@ Because the issue-to-job entry has a `SHARED` credit and a branded debit on bala
 ### Shared cost allocation (reporting only, never posted)
 P&L report option "Allocate shared costs" splits each `SHARED` P&L line between UMSHA and MIRAE using the key in `Settings.allocationKey`:
 - `REVENUE` (default): by each brand's net revenue in the period
-- `FIXED`: by `Settings.allocationUmshaPct` (e.g. 6000 bps = 60%)
+- `FIXED`: by `Settings.allocationUmshaPctBps` (e.g. 6000 bps = 60%)
 - `NONE`: show SHARED column
 
 This is a presentation choice, so it never creates journal entries. Defensible: it can be changed without restating the books.
@@ -132,6 +140,7 @@ Dr  INPUT_TAX     [same brand]          T  (if claimable)
 A bill can mix R2, R3, R4 lines; the engine sums the AP credit per brand.
 
 ### R5. Bill payment (with withholding tax)
+A bill with lines for several brands is paid pro-rata to its gross per brand (D-17). Each payment takes the cumulative split: `share_b = split(paidBefore + P)_b − split(paidBefore)_b`, so once the bill is fully paid each brand's AP clears to the paisa. WHT is split across brands the same way.
 WHT = `roundHalfEven(base * whtRateBps / 10000)`, where rate comes from the vendor's WHT tax code and filer status, and `base` is the amount being paid either including or excluding sales tax per `TaxCodes.whtBase` (`GROSS` or `EXCL_SALES_TAX`, decision D-04).
 ```
 Dr  AP           [bill brand]  P            (P = amount of bill being settled)
@@ -154,7 +163,8 @@ Dr  INPUT_TAX     [brand]  T
 Dr  WIP                      [job brand]  V   (jobId, costComponent = item category)
   Cr INV_FABRIC/INV_TRIMS    [SHARED]     V   (itemId, qty negative)
 ```
-`V = round(qty * avgCost)`. Return to stock is the exact reverse at the **original issue cost** (look up the issue movement), not current average.
+`V = round(qty * avgCost)`. Return to stock is the exact reverse at the **original issue cost** (look up the issue movement), not current average: `round(issueValue × returnQty / issueQty)`, and the return that brings the issue's remaining quantity to zero takes exactly the value left on it. The return move records the issue it came from (`StockMoves.sourceMoveId`).
+Issuing to a **delivered** MTO order is a late cost and is released to COGS in the same entry, as in R8.
 
 ### R8. MTO delivery (invoice + advance application + cost release), one entry
 Given job J with net price N, tax T, advances held A, WIP balance C (by component):
@@ -165,11 +175,13 @@ Dr  AR                [UMSHA]  G                    (contactId, jobId)
 Dr  CUSTOMER_ADV      [UMSHA]  min(A, G)
   Cr AR               [UMSHA]  min(A, G)
 Dr  50xx COGS by component [UMSHA]  C_component    (one line per component)
-  Cr WIP              [UMSHA]  C                    (jobId)
+  Cr WIP              [UMSHA]  C_component          (jobId, one line per component)
 ```
+WIP is credited per component (summing to C) so each component of the job's WIP clears to exactly zero. Revenue and COGS lines carry the jobId, which is how job profitability is reported.
 - If `A > G` (overpaid), the excess stays in CUSTOMER_ADV and the order shows "refund due".
 - Job status → `DELIVERED`. Margin = N − C.
-- Any WIP posted to the job after delivery (late karigar bill) posts as R3 and then **immediately** releases to COGS in the same entry, flagged `lateCost = true`.
+- Any WIP posted to the job after delivery (late karigar bill) posts as R3 and then **immediately** releases to COGS in the same entry, flagged `lateCost = true` on the WIP and COGS lines.
+- A cost on a **completed RTW batch** is refused with `E_JOB_CLOSED` for now (decision D-22); post it as an expense or a manual journal.
 
 ### R9. Customer payment against invoice
 ```
@@ -236,7 +248,7 @@ Dr  CUSTOMER_ADV   [UMSHA]  A
   Cr Bank/Cash     [UMSHA]  R
   Cr CANCEL_INCOME [UMSHA]  F
 ```
-WIP: either return materials to stock (reverse R7) or write off `Dr 5070 Other direct costs / Cr WIP`.
+WIP: either return materials to stock (reverse R7) or write off `Dr COGS_OTHER (5070) / Cr WIP`. With `RETURN`, every material issue still on the job comes back at its original cost and whatever WIP remains (labour, outsourced work) is written off; labour cannot go back into stock. Both are in the same entry as the advance lines. RTW batches cancel the same way (brand MIRAE, no advances).
 
 ### R18. Owner drawings / family payments
 ```
@@ -259,9 +271,18 @@ Dr  OUTPUT_TAX  [SHARED]  Out
 
 ### R22. Reversal
 Mirror of the original: every debit becomes a credit, same accounts, brands, job/contact/item refs. `reversesJeId` and `reversedByJeId` link both. Inventory reversals restore qty at original cost and recompute average.
+- A reversal cannot itself be reversed, and an entry can be reversed only once. A reason is required.
+- Reversing stock that came **in** takes it out at its original cost. If that leaves the item with no quantity but some value (other movements happened at a different average since), the leftover goes to `SHRINKAGE` in the same entry. If it would leave quantity with a negative value, the stock has already been used: the reversal is refused, so post a stock count adjustment instead.
+- A bill or invoice that has payments cannot be reversed until those payments are reversed.
+- The source document becomes `VOID` (payments, bills, expenses, invoices, sales, counts, cash-ups). Reversing a delivery puts the job back to `READY`; reversing a batch completion or a cancellation puts it back to `OPEN`.
 
 ### R23. Year-end close
 For fiscal year ending date D: for each P&L account, a line bringing its balance to zero, net to RETAINED_EARNINGS [SHARED]. Generated, dated D, flagged `isClosing = true`.
+Balances are closed per account **and brand**, so each closing line keeps its brand. D must be the last day of a fiscal year (`Settings.fiscalYearStartMonth`). The P&L report leaves closing entries out, so the closed year's P&L still shows its results.
+
+### Manual journals and opening stock
+- Manual journals (`isManual = true`, Finance/Owner) need a memo and may not touch inventory accounts: stock value changes only through stock documents, so the inventory GL always equals the stock valuation.
+- Opening stock at go-live (D-01) is its own entry: `Dr INV_x [item brand] / Cr RETAINED_EARNINGS [SHARED]`, with `OPENING` stock moves. The opening trial balance journal leaves stock accounts out.
 
 ## 5. Validation rules (core/validate.js)
 
@@ -278,6 +299,7 @@ For fiscal year ending date D: for each P&L account, a line bringing its balance
 | `E_ROLE` | User role not permitted for action |
 | `E_DUP_REQUEST` | Not an error: returns stored result |
 | `E_TAX_OVERRIDE_NO_REASON` | Tax amount overridden without reason |
+| `E_VALIDATION` | Anything else malformed, including a line on AR/AP/customer or vendor advances without `contactId`, on WIP without `jobId`, on an inventory account without `itemId`, or inventory lines that do not equal the entry's stock moves item by item |
 
 ## 6. Derived balances
 
@@ -286,5 +308,5 @@ Account balances are **always derived** from `JournalLines`. `Balances` cache (C
 Sub-ledger balances:
 - Customer balance = Σ AR lines for contactId − CUSTOMER_ADV lines for contactId (shown separately: "owes" vs "advance held").
 - Vendor balance = Σ AP lines for contactId.
-- Job cost = Σ WIP debits for jobId (+ released COGS after delivery).
+- Job cost = WIP still on the job + COGS released for it (by component), plus finished goods a batch moved to stock (`Reports.jobCostSheet`).
 - Item qty/value = Σ StockMoves for itemId.

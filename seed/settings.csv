@@ -1,5 +1,6 @@
 key,value
 companyName,UMSHA
+rtwBrandName,Mirae
 ntn,
 strn,
 baseCurrency,PKR
@@ -7,9 +8,13 @@ fiscalYearStartMonth,7
 timezone,Asia/Karachi
 allocationKey,REVENUE
 allocationUmshaPctBps,6000
+currencyGrouping,STANDARD
 rtwPricesIncludeTax,TRUE
 allowNegativeStock,FALSE
 defaultMtoRevenueAccount,4010
+storeCashAccount,1020
+walletAccount,1120
 backupFolderId,
+qbDateFormat,DD/MM/YYYY
 attachmentsFolderId,
 whatsappReceiptTemplate,"Dear {name}, thank you. Received Rs {amount} for {docId}. Balance Rs {balance}. UMSHA"

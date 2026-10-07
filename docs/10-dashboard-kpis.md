@@ -159,3 +159,14 @@ KPI formulas live in `core/kpis.js` as pure functions over (summaries, documents
 - **T23.** Using state after T01–T12: C4 average job margin = 73.8%; D2 transactions = 1; D3 ATV = Rs 18,000; D9 return rate = 5,000 ÷ 18,000 = 27.78%; A4 advance coverage with advances held 0 → displays "n/a", not divide-by-zero.
 - **T24.** `MonthlySummary` after incremental updates equals a full rebuild, for 500 random documents.
 - **T25.** Store-role `dashboard.get` for the Overview tab → `E_ROLE`; for the Mirae tab returns only its own store and no cost or margin fields.
+
+## Implementation notes (M10)
+
+- Code: `core/kpis.js` (all KPI formulas, periods, targets, the summary caches), `apps-script/Summaries.gs` (cache upkeep and `dashboard.get` loading/caching), dashboard screen in `index.html`. Tests: `tests/kpis.test.js`, `tests/api-dashboard.test.js`, `tests/ui/run.js`.
+- Periods: weeks start Monday; quarters and YTD follow the fiscal year (`fiscalYearStartMonth`, July). "Previous period" for MTD/QTD/YTD/L12M is the same span one month/quarter/year earlier (1–15 Oct vs 1–15 Sep); for Today, the day before; for Custom, the same number of days just before.
+- Ledger figures read `MonthlySummary` when the period (and comparison) start on the 1st and end on a month end or today; otherwise the server reads six columns of `JournalLines` (`Db.readColumns`), not the whole tab. Point-in-time figures (cash, advances, WIP) are balances at the end of the period.
+- Tiles not in the catalogue tables: B6 break-even shows "% of break-even achieved this month" as its note; A5 is a tile (lowest projected balance) plus the 60-day chart; A6 age uses oldest-first matching of card takings against the unsettled balance.
+- RAG: from `KpiTargets` (thresholds per KPI, brand, month); fixed rules where the catalogue states them (bills overdue > 0 red; orders overdue red; bank reconciliation red after `bankRecMaxDays`, default 35; last closed month red when more than one month behind).
+- Revenue targets are monthly per brand; for longer periods they are added up over the months, and for "All brands" over both brands.
+- Not built: D15 sales heatmap (P2; `Sales.createdAt` is available for it later). G7 counts reopened months only (D-24). B6 treats all running costs as fixed except card fees and cash over/short (D-23).
+- Role filtering is in the core (`Kpis.dashboard` leaves cost KPIs out for Store) and again on the result (`Kpis.filterForRole`); F4 top customers and G6 drawings are Owner only.

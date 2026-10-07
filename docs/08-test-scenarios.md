@@ -6,6 +6,12 @@ These are the acceptance tests. Implement each as a `node --test` case against `
 
 Scenarios run **in sequence** on one shared state unless marked standalone. Brand shown in brackets.
 
+Implementation notes (`tests/scenarios.test.js`, `tests/scenarios-later.test.js`, `tests/property.test.js`):
+- Expected journals are compared as debits and credits summed per account and brand, as shown below. The engine may post one line per component or per SKU (e.g. WIP credits per cost component in T06), and those lines add up to the amounts shown.
+- T08's "WIP built up via issues and labour" is: issue 200 g of TRM-0001 (6,000) plus a karigar bill from VEN-00006 for 94,000 STITCHING, paid in full, so the T17 vendor balances are unchanged.
+- T02a's claimable input tax uses fixture `TEST-ST-IN-18` (PURCHASE_INPUT, 1800 bps, claimable).
+- T23 (`tests/kpis.test.js`): after T12 no advances are held (the T01 advance was applied at delivery in T06), so A4 is n/a on that state; after T01 alone it is 1.00×. D3 uses sales net of tax before returns. T24 runs on the core (3 seeds × 500 documents) and through the API (summaries vs `summaries.rebuild` and the nightly job). T25 is in `tests/api-dashboard.test.js`.
+
 ---
 
 ### T00. Money utilities (standalone)
