@@ -60,6 +60,18 @@ describe('scripts/build-core.js', () => {
     assert.equal(readText(BROWSER_FILE), out, 'core.bundle.js is stale');
   });
 
+  // Apps Script's upload check rejects BigInt literals (0n, 10000n) with
+  // "Unexpected token ILLEGAL" even though its runtime supports BigInt, so
+  // core code writes BigInt(0) instead.
+  test('Core.gs has no BigInt literals (Apps Script cannot upload them)', () => {
+    const bad = [];
+    out.split('\n').forEach((line, i) => {
+      const code = line.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g, "''").replace(/\/\/.*$/, '');
+      if (/(^|[^\w.])\d+n\b/.test(code)) bad.push((i + 1) + ': ' + line.trim());
+    });
+    assert.deepEqual(bad, []);
+  });
+
   test('committed apps-script/Seed.gs is up to date and holds every seed row', () => {
     const seed = buildSeed();
     assert.equal(readText(SEED_FILE), seed);

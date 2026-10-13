@@ -125,13 +125,13 @@ function roundHalfEven(x) {
 function divRoundHalfEven(num, den) {
   let n = BigInt(num);
   let d = BigInt(den);
-  if (d === 0n) throw validationError('Division by zero');
-  if (d < 0n) { n = -n; d = -d; }
+  if (d === BigInt(0)) throw validationError('Division by zero');
+  if (d < BigInt(0)) { n = -n; d = -d; }
   let q = n / d;
   let r = n % d;
-  if (r < 0n) { q -= 1n; r += d; } // floor division
-  const twice = 2n * r;
-  if (twice > d || (twice === d && q % 2n !== 0n)) q += 1n;
+  if (r < BigInt(0)) { q -= BigInt(1); r += d; } // floor division
+  const twice = BigInt(2) * r;
+  if (twice > d || (twice === d && q % BigInt(2) !== BigInt(0))) q += BigInt(1);
   return toSafeNumber(q);
 }
 
@@ -165,7 +165,7 @@ function parseDecimal(value, maxPlaces, field) {
 // value x 10^places as an exact safe integer: scaleDecimal(2.5, 3) = 2500.
 function scaleDecimal(value, places, field) {
   const d = parseDecimal(value, places, field);
-  return toSafeNumber(d.units * 10n ** BigInt(places - d.places));
+  return toSafeNumber(d.units * BigInt(10) ** BigInt(places - d.places));
 }
 
 // Foreign currency to paisa (R19): fxAmount (e.g. 1500.25 USD) x fxRate (PKR
@@ -173,8 +173,8 @@ function scaleDecimal(value, places, field) {
 function fxToPaisa(fxAmount, fxRate) {
   const minor = BigInt(scaleDecimal(fxAmount, 2, 'fxAmount'));
   const rate = parseDecimal(fxRate, 6, 'fxRate');
-  if (minor <= 0n || rate.units <= 0n) throw validationError('Foreign amount and rate must be positive', 'fxAmount');
-  return divRoundHalfEven(minor * rate.units, 10n ** BigInt(rate.places));
+  if (minor <= BigInt(0) || rate.units <= BigInt(0)) throw validationError('Foreign amount and rate must be positive', 'fxAmount');
+  return divRoundHalfEven(minor * rate.units, BigInt(10) ** BigInt(rate.places));
 }
 
 // Turn weights into exact BigInts on a common scale. Weights are decimal
@@ -182,7 +182,7 @@ function fxToPaisa(fxAmount, fxRate) {
 function scaleWeights(weights) {
   if (weights.every(function (w) { return typeof w === 'bigint'; })) {
     weights.forEach(function (w) {
-      if (w < 0n) throw validationError('Weights must be non-negative', 'weights');
+      if (w < BigInt(0)) throw validationError('Weights must be non-negative', 'weights');
     });
     return weights.slice();
   }
@@ -216,11 +216,11 @@ function splitProRata(total, weights) {
     throw validationError('splitProRata needs at least one weight', 'weights');
   }
   const scaled = scaleWeights(weights);
-  const sum = scaled.reduce(function (a, b) { return a + b; }, 0n);
-  if (sum === 0n) throw validationError('splitProRata needs at least one positive weight', 'weights');
+  const sum = scaled.reduce(function (a, b) { return a + b; }, BigInt(0));
+  if (sum === BigInt(0)) throw validationError('splitProRata needs at least one positive weight', 'weights');
   let residualIndex = -1;
   for (let i = scaled.length - 1; i >= 0; i--) {
-    if (scaled[i] > 0n) { residualIndex = i; break; }
+    if (scaled[i] > BigInt(0)) { residualIndex = i; break; }
   }
   const big = BigInt(total);
   const shares = scaled.map(function (w) { return divRoundHalfEven(big * w, sum); });
@@ -977,7 +977,7 @@ var Inventory = (function () {
 const QTY_PLACES = 3;
 const QTY_SCALE = 1000;
 const MICRO = 10000; // avgCostMicro = paisa x MICRO per unit
-const MICRO_PER_MILLI = 10000000n; // MICRO x QTY_SCALE
+const MICRO_PER_MILLI = BigInt(10000000); // MICRO x QTY_SCALE
 
 const ACCOUNT_KEY_BY_CATEGORY = { FABRIC: 'INV_FABRIC', TRIM: 'INV_TRIMS', PACKAGING: 'INV_PACKAGING', SKU: 'INV_FG' };
 const COMPONENT_BY_CATEGORY = { FABRIC: 'FABRIC', TRIM: 'TRIMS', PACKAGING: 'PACKAGING' };
@@ -1422,7 +1422,7 @@ function sum(arr, fn) { let t = 0; arr.forEach(function (x) { t += fn ? fn(x) : 
 function inRange(d, r) { return !!d && d >= r.from && d <= r.to; }
 function ratioBps(num, den) {
   if (!den || den <= 0 || num === null || num === undefined) return null;
-  return Money.divRoundHalfEven(BigInt(Math.round(num)) * 10000n, BigInt(Math.round(den)));
+  return Money.divRoundHalfEven(BigInt(Math.round(num)) * BigInt(10000), BigInt(Math.round(den)));
 }
 function avg(num, den) { return den ? Math.round(num / den) : null; }
 function isVoid(d) { return d.status === 'VOID'; }
@@ -1789,7 +1789,7 @@ function breakEven(ctx) {
   const variable = ['CARD_FEES', 'CASH_OVER_SHORT'].reduce(function (t, k) { const c = codeOf(ctx, k); return t + (c ? p.byCode[c] || 0 : 0); }, 0);
   const gm = gmBps(p);
   if (!gm || gm <= 0) return null;
-  return Money.divRoundHalfEven(BigInt(Math.round((p.opex - variable) / 3)) * 10000n, BigInt(gm));
+  return Money.divRoundHalfEven(BigInt(Math.round((p.opex - variable) / 3)) * BigInt(10000), BigInt(gm));
 }
 
 // B5: each brand's gross profit less its own running costs and its share of
@@ -2955,7 +2955,7 @@ function inclusiveTax(grosses, codes) {
   groupByCode(codes).forEach(function (g) {
     const gross = g.idx.reduce(function (s, i) { return s + grosses[i]; }, 0);
     if (gross === 0 || g.code.rateBps === 0) return;
-    const n = Money.divRoundHalfEven(BigInt(gross) * 10000n, 10000 + g.code.rateBps);
+    const n = Money.divRoundHalfEven(BigInt(gross) * BigInt(10000), 10000 + g.code.rateBps);
     const split = Money.splitProRata(n, g.idx.map(function (i) { return grosses[i]; }));
     g.idx.forEach(function (i, k) { nets[i] = split[k]; });
   });
@@ -3529,7 +3529,7 @@ function deliverJob(input, ctx) {
     dueDate: input.dueDate || input.date, netPaisa: n, taxPaisa: t, grossPaisa: g, taxCodeId: code ? code.id : '',
     taxOverrideReason: overrideReason, advanceAppliedPaisa: applied, paidPaisa: 0, balancePaisa: g - applied,
     refundDuePaisa: Math.max(0, held - g), costPaisa: cost, marginPaisa: margin,
-    marginBps: n === 0 ? null : Money.divRoundHalfEven(BigInt(margin) * 10000n, n), lines: invoiceLines,
+    marginBps: n === 0 ? null : Money.divRoundHalfEven(BigInt(margin) * BigInt(10000), n), lines: invoiceLines,
   };
   e.docUpdates.push({ docType: 'JOB', id: job.id, fields: { status: 'DELIVERED', deliveredDate: input.date, invoiceId: input.docId || '' } });
   return finish(e, ctx);
@@ -3599,8 +3599,8 @@ function completeBatch(input, ctx) {
     if (item.category !== 'SKU') fail('E_VALIDATION', item.id + ' is not a finished SKU', 'outputs[' + i + '].itemId');
     const qm = Inventory.toMilli(o.qty);
     if (qm <= 0) fail('E_VALIDATION', 'Quantity must be more than zero', 'outputs[' + i + '].qty');
-    if (weights[i].units < 0n) fail('E_VALIDATION', 'Weight cannot be negative', 'outputs[' + i + '].weight');
-    return BigInt(qm) * weights[i].units * 10n ** BigInt(maxPlaces - weights[i].places);
+    if (weights[i].units < BigInt(0)) fail('E_VALIDATION', 'Weight cannot be negative', 'outputs[' + i + '].weight');
+    return BigInt(qm) * weights[i].units * BigInt(10) ** BigInt(maxPlaces - weights[i].places);
   });
   const shares = Money.splitProRata(total, products);
   input.outputs.forEach(function (o, i) {
@@ -4463,7 +4463,7 @@ function profitAndLoss(lines, acc, opts) {
     summary.operatingProfit[c] = op;
     summary.profitBeforeTax[c] = pbt;
     summary.netProfit[c] = pbt - sections.tax.total[c];
-    summary.grossMarginBps[c] = rev > 0 ? Money.divRoundHalfEven(BigInt(gp) * 10000n, rev) : null;
+    summary.grossMarginBps[c] = rev > 0 ? Money.divRoundHalfEven(BigInt(gp) * BigInt(10000), rev) : null;
   });
   return { from: o.from || '', to: o.to || '', allocate: allocate, sections: sections, summary: summary, warnings: warnings };
 }
@@ -4621,7 +4621,7 @@ function jobProfitability(lines, acc, jobs, opts) {
     return {
       jobId: j.id, contactId: j.contactId || '', title: j.title || '', deliveredDate: j.deliveredDate,
       revenuePaisa: p.revenue, costPaisa: p.cost, marginPaisa: margin,
-      marginBps: p.revenue > 0 ? Money.divRoundHalfEven(BigInt(margin) * 10000n, p.revenue) : null,
+      marginBps: p.revenue > 0 ? Money.divRoundHalfEven(BigInt(margin) * BigInt(10000), p.revenue) : null,
     };
   });
 }
@@ -4682,7 +4682,7 @@ function skuMargin(sales, saleLines, items, opts) {
     const r = bySku[k];
     const margin = r.netPaisa - r.costPaisa;
     return { itemId: r.itemId, name: r.name, collection: r.collection, units: Inventory.fromMilli(r.unitsMilli), netPaisa: r.netPaisa, costPaisa: r.costPaisa, marginPaisa: margin,
-      marginBps: r.netPaisa > 0 ? Money.divRoundHalfEven(BigInt(margin) * 10000n, r.netPaisa) : null };
+      marginBps: r.netPaisa > 0 ? Money.divRoundHalfEven(BigInt(margin) * BigInt(10000), r.netPaisa) : null };
   });
   const byCollection = {};
   rows.forEach(function (r) {
@@ -4694,7 +4694,7 @@ function skuMargin(sales, saleLines, items, opts) {
     collections: Object.keys(byCollection).sort().map(function (k) {
       const c = byCollection[k];
       const m = c.netPaisa - c.costPaisa;
-      return { collection: c.collection, netPaisa: c.netPaisa, costPaisa: c.costPaisa, marginPaisa: m, marginBps: c.netPaisa > 0 ? Money.divRoundHalfEven(BigInt(m) * 10000n, c.netPaisa) : null };
+      return { collection: c.collection, netPaisa: c.netPaisa, costPaisa: c.costPaisa, marginPaisa: m, marginBps: c.netPaisa > 0 ? Money.divRoundHalfEven(BigInt(m) * BigInt(10000), c.netPaisa) : null };
     }),
   };
 }

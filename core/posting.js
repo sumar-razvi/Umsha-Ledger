@@ -142,7 +142,7 @@ function inclusiveTax(grosses, codes) {
   groupByCode(codes).forEach(function (g) {
     const gross = g.idx.reduce(function (s, i) { return s + grosses[i]; }, 0);
     if (gross === 0 || g.code.rateBps === 0) return;
-    const n = Money.divRoundHalfEven(BigInt(gross) * 10000n, 10000 + g.code.rateBps);
+    const n = Money.divRoundHalfEven(BigInt(gross) * BigInt(10000), 10000 + g.code.rateBps);
     const split = Money.splitProRata(n, g.idx.map(function (i) { return grosses[i]; }));
     g.idx.forEach(function (i, k) { nets[i] = split[k]; });
   });
@@ -716,7 +716,7 @@ function deliverJob(input, ctx) {
     dueDate: input.dueDate || input.date, netPaisa: n, taxPaisa: t, grossPaisa: g, taxCodeId: code ? code.id : '',
     taxOverrideReason: overrideReason, advanceAppliedPaisa: applied, paidPaisa: 0, balancePaisa: g - applied,
     refundDuePaisa: Math.max(0, held - g), costPaisa: cost, marginPaisa: margin,
-    marginBps: n === 0 ? null : Money.divRoundHalfEven(BigInt(margin) * 10000n, n), lines: invoiceLines,
+    marginBps: n === 0 ? null : Money.divRoundHalfEven(BigInt(margin) * BigInt(10000), n), lines: invoiceLines,
   };
   e.docUpdates.push({ docType: 'JOB', id: job.id, fields: { status: 'DELIVERED', deliveredDate: input.date, invoiceId: input.docId || '' } });
   return finish(e, ctx);
@@ -786,8 +786,8 @@ function completeBatch(input, ctx) {
     if (item.category !== 'SKU') fail('E_VALIDATION', item.id + ' is not a finished SKU', 'outputs[' + i + '].itemId');
     const qm = Inventory.toMilli(o.qty);
     if (qm <= 0) fail('E_VALIDATION', 'Quantity must be more than zero', 'outputs[' + i + '].qty');
-    if (weights[i].units < 0n) fail('E_VALIDATION', 'Weight cannot be negative', 'outputs[' + i + '].weight');
-    return BigInt(qm) * weights[i].units * 10n ** BigInt(maxPlaces - weights[i].places);
+    if (weights[i].units < BigInt(0)) fail('E_VALIDATION', 'Weight cannot be negative', 'outputs[' + i + '].weight');
+    return BigInt(qm) * weights[i].units * BigInt(10) ** BigInt(maxPlaces - weights[i].places);
   });
   const shares = Money.splitProRata(total, products);
   input.outputs.forEach(function (o, i) {

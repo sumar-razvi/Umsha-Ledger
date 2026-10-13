@@ -51,13 +51,13 @@ function roundHalfEven(x) {
 function divRoundHalfEven(num, den) {
   let n = BigInt(num);
   let d = BigInt(den);
-  if (d === 0n) throw validationError('Division by zero');
-  if (d < 0n) { n = -n; d = -d; }
+  if (d === BigInt(0)) throw validationError('Division by zero');
+  if (d < BigInt(0)) { n = -n; d = -d; }
   let q = n / d;
   let r = n % d;
-  if (r < 0n) { q -= 1n; r += d; } // floor division
-  const twice = 2n * r;
-  if (twice > d || (twice === d && q % 2n !== 0n)) q += 1n;
+  if (r < BigInt(0)) { q -= BigInt(1); r += d; } // floor division
+  const twice = BigInt(2) * r;
+  if (twice > d || (twice === d && q % BigInt(2) !== BigInt(0))) q += BigInt(1);
   return toSafeNumber(q);
 }
 
@@ -91,7 +91,7 @@ function parseDecimal(value, maxPlaces, field) {
 // value x 10^places as an exact safe integer: scaleDecimal(2.5, 3) = 2500.
 function scaleDecimal(value, places, field) {
   const d = parseDecimal(value, places, field);
-  return toSafeNumber(d.units * 10n ** BigInt(places - d.places));
+  return toSafeNumber(d.units * BigInt(10) ** BigInt(places - d.places));
 }
 
 // Foreign currency to paisa (R19): fxAmount (e.g. 1500.25 USD) x fxRate (PKR
@@ -99,8 +99,8 @@ function scaleDecimal(value, places, field) {
 function fxToPaisa(fxAmount, fxRate) {
   const minor = BigInt(scaleDecimal(fxAmount, 2, 'fxAmount'));
   const rate = parseDecimal(fxRate, 6, 'fxRate');
-  if (minor <= 0n || rate.units <= 0n) throw validationError('Foreign amount and rate must be positive', 'fxAmount');
-  return divRoundHalfEven(minor * rate.units, 10n ** BigInt(rate.places));
+  if (minor <= BigInt(0) || rate.units <= BigInt(0)) throw validationError('Foreign amount and rate must be positive', 'fxAmount');
+  return divRoundHalfEven(minor * rate.units, BigInt(10) ** BigInt(rate.places));
 }
 
 // Turn weights into exact BigInts on a common scale. Weights are decimal
@@ -108,7 +108,7 @@ function fxToPaisa(fxAmount, fxRate) {
 function scaleWeights(weights) {
   if (weights.every(function (w) { return typeof w === 'bigint'; })) {
     weights.forEach(function (w) {
-      if (w < 0n) throw validationError('Weights must be non-negative', 'weights');
+      if (w < BigInt(0)) throw validationError('Weights must be non-negative', 'weights');
     });
     return weights.slice();
   }
@@ -142,11 +142,11 @@ function splitProRata(total, weights) {
     throw validationError('splitProRata needs at least one weight', 'weights');
   }
   const scaled = scaleWeights(weights);
-  const sum = scaled.reduce(function (a, b) { return a + b; }, 0n);
-  if (sum === 0n) throw validationError('splitProRata needs at least one positive weight', 'weights');
+  const sum = scaled.reduce(function (a, b) { return a + b; }, BigInt(0));
+  if (sum === BigInt(0)) throw validationError('splitProRata needs at least one positive weight', 'weights');
   let residualIndex = -1;
   for (let i = scaled.length - 1; i >= 0; i--) {
-    if (scaled[i] > 0n) { residualIndex = i; break; }
+    if (scaled[i] > BigInt(0)) { residualIndex = i; break; }
   }
   const big = BigInt(total);
   const shares = scaled.map(function (w) { return divRoundHalfEven(big * w, sum); });
