@@ -15,9 +15,9 @@ Optional: create two Drive folders, **UMSHA Ledger backups** and **UMSHA Ledger 
 ## 2. Create the Google sign-in client
 
 1. Go to <https://console.cloud.google.com/> → create a project (e.g. `umsha-ledger`).
-2. **APIs & Services → OAuth consent screen**: User type *External*, app name *UMSHA Ledger*, support email = company account. Add the scopes `email`, `profile`, `openid`. Publish the app (or add every staff member as a test user).
+2. **APIs & Services → OAuth consent screen**: User type *External*, app name *UMSHA Ledger*, support email = company account. Add the scopes `email`, `profile`, `openid`. Publishing needs a home page and privacy policy on the Branding page; the simple route is to leave it in *Testing* and add every staff member as a test user (up to 100).
 3. **APIs & Services → Credentials → Create credentials → OAuth client ID**: type *Web application*.
-   - Authorized JavaScript origins: your GitHub Pages origin, e.g. `https://sumar-razvi.github.io`, plus `http://localhost:8000` for testing.
+   - Authorized JavaScript origins: your GitHub Pages origin, e.g. `https://sumar-razvi.github.io`, plus `http://localhost:8000` and `http://localhost` for testing.
 4. Copy the **Client ID** (`….apps.googleusercontent.com`). It is not a secret, but keep it in Script Properties and the app's CONFIG block, not scattered in code.
 
 ## 3. Create and push the Apps Script project
@@ -31,11 +31,17 @@ npx @google/clasp push
 
 `clasp create` writes `.clasp.json` (git-ignored; see `.clasp.json.example`). Enable the Apps Script API first if clasp asks: <https://script.google.com/home/usersettings>.
 
+Things that commonly go wrong here:
+- Run every command from the project folder (the one with `package.json`), or clasp saves `.clasp.json` somewhere else and `push` says *Project settings not found*.
+- `clasp create` may replace `apps-script/appsscript.json` with a blank manifest. Restore ours before pushing: `git checkout -- apps-script/appsscript.json`. When `push` asks whether to overwrite the manifest, answer yes.
+- *No credentials found*: `clasp login` did not finish. If login fails with `request to https://oauth2.googleapis.com/token failed` or `ETIMEDOUT`, the network is blocking Node (not the browser): try another network (a phone hotspot works), or set `$env:NODE_OPTIONS="--dns-result-order=ipv4first"` in PowerShell.
+- Windows PowerShell *running scripts is disabled*: use `npx.cmd` / `npm.cmd`.
+
 Always run `npm run build` (and `npm test`) before `clasp push`, so the server runs exactly the code the tests checked.
 
 ## 4. Script Properties
 
-In the Apps Script editor (`npx @google/clasp open`): **Project Settings → Script Properties**, add:
+Open the project at <https://script.google.com> (company account) → **Project Settings** (gear icon). Check that the time zone is *(GMT+05:00) Karachi* (it comes from our manifest). Under **Script Properties**, add:
 
 | Property | Value |
 |---|---|
@@ -75,6 +81,16 @@ curl -L "https://script.google.com/macros/s/…/exec"
 
 Put the URL and the Client ID into the `CONFIG` block at the top of `index.html`.
 
+## 6b. Publish the app on GitHub Pages
+
+The app is `index.html` plus `core.bundle.js`, served as they are from the repo (the empty `.nojekyll` file tells GitHub not to process them). GitHub Pages is free for public repositories; a private repository needs a paid GitHub plan. The repository holds no secrets: the API URL and Client ID are public by design, and the data lives only in the Sheet.
+
+1. Commit the `CONFIG` change and merge it into `main`.
+2. On GitHub: the repository → **Settings → Pages** → **Source: Deploy from a branch**, branch `main`, folder `/ (root)` → **Save**.
+3. After a minute or two the app is at `https://<github-user>.github.io/<repo>/` (for this repo, `https://sumar-razvi.github.io/Umsha-Ledger/`). Its origin (`https://sumar-razvi.github.io`, no path) must be in the OAuth client's **Authorized JavaScript origins** (step 2).
+
+Every later push to `main` republishes the page.
+
 ### Updating later
 
 ```bash
@@ -87,7 +103,7 @@ Re-deploying to the **same deployment ID** keeps the URL unchanged. If a release
 
 ## 7. Users and settings
 
-Add staff as users (Owner only), each with one role: Owner, Finance, Studio, Store (with their store code, e.g. `MIRAE-KHI-01`) or Viewer. Use the app's Settings screen, or the `users.upsert` action. Until the Settings screen exists (milestone M3), you can type rows into the **Users** tab directly: `id` (e.g. `USR-002`), lower-case `email`, `role`, `store`, and `isActive` = `TRUE`.
+Add staff as users (Owner only) in the app: **Settings → People → Add person**, each with one role: Owner, Finance, Studio, Store (with their store code, e.g. `MIRAE-KHI-01`) or Viewer. While the OAuth consent screen is in *Testing*, also add each person's Gmail as a **test user** in Google Cloud (Google Auth Platform → Audience), or Google will refuse their sign-in.
 
 In **Settings**, fill in company name, NTN/STRN, `backupFolderId` and `attachmentsFolderId`.
 

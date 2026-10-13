@@ -68,7 +68,7 @@ function start(opts) {
   gas.rows('Users').forEach((u) => gas.call(users.owner, 'users.upsert', { id: u.id, name: names[u.email] || u.name }));
   if (o.demo !== false) seedDemo(gas, users);
   const page = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
-    .replace("API_URL: '',", "API_URL: '/api',")
+    .replace(/API_URL: '[^']*',/, "API_URL: '/api',") // whatever the real deployment URL is
     .replace('DEV_SIGNIN: false,', 'DEV_SIGNIN: true,');
 
   const server = http.createServer((req, res) => {
