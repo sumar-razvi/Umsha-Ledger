@@ -31,6 +31,12 @@ const BROWSER_FILE = path.join(ROOT, 'core.bundle.js');
 const REQUIRE_RE = /^const (\w+) = require\('\.\/([\w-]+)\.js'\);[ \t]*\r?\n/gm;
 const EXPORT_RE = /^if \(typeof module !== 'undefined'\) module\.exports = (\{[\s\S]*\});\s*$/m;
 
+// Read a source file with Unix line endings, so a Windows checkout (CRLF)
+// builds exactly the same output.
+function readText(file) {
+  return fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+}
+
 function namespaceFor(fileName) {
   return path.basename(fileName, '.js')
     .split(/[-_]/)
@@ -90,7 +96,7 @@ function buildCore(coreDir) {
   const dir = coreDir || CORE_DIR;
   const files = fs.readdirSync(dir)
     .filter(function (n) { return n.endsWith('.js'); })
-    .map(function (n) { return parseCoreFile(n, fs.readFileSync(path.join(dir, n), 'utf8')); });
+    .map(function (n) { return parseCoreFile(n, readText(path.join(dir, n))); });
   const ordered = sortByDependencies(files);
 
   const parts = [
@@ -122,7 +128,7 @@ function buildSeed(seedDir) {
     'var SEED = {',
   ];
   names.forEach(function (n) {
-    const rows = Csv.parseObjects(fs.readFileSync(path.join(dir, n), 'utf8'));
+    const rows = Csv.parseObjects(readText(path.join(dir, n)));
     parts.push('  ' + JSON.stringify(path.basename(n, '.csv')) + ': [');
     rows.forEach(function (r) { parts.push('    ' + JSON.stringify(r) + ','); });
     parts.push('  ],');
@@ -147,4 +153,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildCore, buildSeed, namespaceFor, OUT_FILE, SEED_FILE, BROWSER_FILE };
+module.exports = { buildCore, buildSeed, namespaceFor, readText, OUT_FILE, SEED_FILE, BROWSER_FILE };

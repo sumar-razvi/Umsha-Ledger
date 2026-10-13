@@ -7,7 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
-const { buildCore, buildSeed, OUT_FILE, SEED_FILE, BROWSER_FILE } = require('../scripts/build-core.js');
+const { buildCore, buildSeed, readText, OUT_FILE, SEED_FILE, BROWSER_FILE } = require('../scripts/build-core.js');
 
 function runInAppsScriptLikeContext(source) {
   const context = vm.createContext({});
@@ -56,13 +56,13 @@ describe('scripts/build-core.js', () => {
   });
 
   test('committed apps-script/Core.gs is up to date (run `npm run build` if this fails)', () => {
-    assert.equal(fs.readFileSync(OUT_FILE, 'utf8'), out);
-    assert.equal(fs.readFileSync(BROWSER_FILE, 'utf8'), out, 'core.bundle.js is stale');
+    assert.equal(readText(OUT_FILE), out);
+    assert.equal(readText(BROWSER_FILE), out, 'core.bundle.js is stale');
   });
 
   test('committed apps-script/Seed.gs is up to date and holds every seed row', () => {
     const seed = buildSeed();
-    assert.equal(fs.readFileSync(SEED_FILE, 'utf8'), seed);
+    assert.equal(readText(SEED_FILE), seed);
     const ctx = runInAppsScriptLikeContext(seed);
     assert.equal(ctx.SEED.chart_of_accounts.length, 72);
     assert.equal(ctx.SEED.chart_of_accounts.find((a) => a.code === '1710').name, 'Furniture, fixtures & store fit-out');

@@ -1,0 +1,4 @@
+# Always check out with Unix line endings (also on Windows), so the generated
+# Core.gs / Seed.gs / core.bundle.js match what the build produces.
+* text=auto eol=lf
+*.png binary
