@@ -190,8 +190,8 @@ a.tile:hover { border-color: var(--faint); }
 // CONFIG: deployment settings (README-deploy.md). Not secrets: the Sheet ID
 // lives in Apps Script Script Properties and every request is checked there.
 const CONFIG = {
-  API_URL: '',          // Apps Script web app URL ending in /exec
-  OAUTH_CLIENT_ID: '',  // Google Identity Services client ID
+  API_URL: 'https://script.google.com/macros/s/AKfycbySH1p39gegs27GD6UsHiVwZ4xyFK1sKMP_ZwSCXfAKU2tS3YOb3IV6PtMC8kRsE5_38Q/exec', // Apps Script web app URL ending in /exec
+  OAUTH_CLIENT_ID: '664528265823-j4p4fn4kjl59can8rnsmmc3f4p6a1934.apps.googleusercontent.com', // Google Identity Services client ID
   DEV_SIGNIN: false,    // true only on the local demo server (npm run serve)
   CHART_JS_URL: 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js', // dashboard charts; tables are shown if it cannot load
 };

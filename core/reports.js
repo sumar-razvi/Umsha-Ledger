@@ -144,7 +144,7 @@ function profitAndLoss(lines, acc, opts) {
     summary.operatingProfit[c] = op;
     summary.profitBeforeTax[c] = pbt;
     summary.netProfit[c] = pbt - sections.tax.total[c];
-    summary.grossMarginBps[c] = rev > 0 ? Money.divRoundHalfEven(BigInt(gp) * 10000n, rev) : null;
+    summary.grossMarginBps[c] = rev > 0 ? Money.divRoundHalfEven(BigInt(gp) * BigInt(10000), rev) : null;
   });
   return { from: o.from || '', to: o.to || '', allocate: allocate, sections: sections, summary: summary, warnings: warnings };
 }
@@ -302,7 +302,7 @@ function jobProfitability(lines, acc, jobs, opts) {
     return {
       jobId: j.id, contactId: j.contactId || '', title: j.title || '', deliveredDate: j.deliveredDate,
       revenuePaisa: p.revenue, costPaisa: p.cost, marginPaisa: margin,
-      marginBps: p.revenue > 0 ? Money.divRoundHalfEven(BigInt(margin) * 10000n, p.revenue) : null,
+      marginBps: p.revenue > 0 ? Money.divRoundHalfEven(BigInt(margin) * BigInt(10000), p.revenue) : null,
     };
   });
 }
@@ -363,7 +363,7 @@ function skuMargin(sales, saleLines, items, opts) {
     const r = bySku[k];
     const margin = r.netPaisa - r.costPaisa;
     return { itemId: r.itemId, name: r.name, collection: r.collection, units: Inventory.fromMilli(r.unitsMilli), netPaisa: r.netPaisa, costPaisa: r.costPaisa, marginPaisa: margin,
-      marginBps: r.netPaisa > 0 ? Money.divRoundHalfEven(BigInt(margin) * 10000n, r.netPaisa) : null };
+      marginBps: r.netPaisa > 0 ? Money.divRoundHalfEven(BigInt(margin) * BigInt(10000), r.netPaisa) : null };
   });
   const byCollection = {};
   rows.forEach(function (r) {
@@ -375,7 +375,7 @@ function skuMargin(sales, saleLines, items, opts) {
     collections: Object.keys(byCollection).sort().map(function (k) {
       const c = byCollection[k];
       const m = c.netPaisa - c.costPaisa;
-      return { collection: c.collection, netPaisa: c.netPaisa, costPaisa: c.costPaisa, marginPaisa: m, marginBps: c.netPaisa > 0 ? Money.divRoundHalfEven(BigInt(m) * 10000n, c.netPaisa) : null };
+      return { collection: c.collection, netPaisa: c.netPaisa, costPaisa: c.costPaisa, marginPaisa: m, marginBps: c.netPaisa > 0 ? Money.divRoundHalfEven(BigInt(m) * BigInt(10000), c.netPaisa) : null };
     }),
   };
 }

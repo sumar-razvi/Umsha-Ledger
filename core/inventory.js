@@ -21,7 +21,7 @@ const Validate = require('./validate.js');
 const QTY_PLACES = 3;
 const QTY_SCALE = 1000;
 const MICRO = 10000; // avgCostMicro = paisa x MICRO per unit
-const MICRO_PER_MILLI = 10000000n; // MICRO x QTY_SCALE
+const MICRO_PER_MILLI = BigInt(10000000); // MICRO x QTY_SCALE
 
 const ACCOUNT_KEY_BY_CATEGORY = { FABRIC: 'INV_FABRIC', TRIM: 'INV_TRIMS', PACKAGING: 'INV_PACKAGING', SKU: 'INV_FG' };
 const COMPONENT_BY_CATEGORY = { FABRIC: 'FABRIC', TRIM: 'TRIMS', PACKAGING: 'PACKAGING' };

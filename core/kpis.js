@@ -244,7 +244,7 @@ function sum(arr, fn) { let t = 0; arr.forEach(function (x) { t += fn ? fn(x) : 
 function inRange(d, r) { return !!d && d >= r.from && d <= r.to; }
 function ratioBps(num, den) {
   if (!den || den <= 0 || num === null || num === undefined) return null;
-  return Money.divRoundHalfEven(BigInt(Math.round(num)) * 10000n, BigInt(Math.round(den)));
+  return Money.divRoundHalfEven(BigInt(Math.round(num)) * BigInt(10000), BigInt(Math.round(den)));
 }
 function avg(num, den) { return den ? Math.round(num / den) : null; }
 function isVoid(d) { return d.status === 'VOID'; }
@@ -611,7 +611,7 @@ function breakEven(ctx) {
   const variable = ['CARD_FEES', 'CASH_OVER_SHORT'].reduce(function (t, k) { const c = codeOf(ctx, k); return t + (c ? p.byCode[c] || 0 : 0); }, 0);
   const gm = gmBps(p);
   if (!gm || gm <= 0) return null;
-  return Money.divRoundHalfEven(BigInt(Math.round((p.opex - variable) / 3)) * 10000n, BigInt(gm));
+  return Money.divRoundHalfEven(BigInt(Math.round((p.opex - variable) / 3)) * BigInt(10000), BigInt(gm));
 }
 
 // B5: each brand's gross profit less its own running costs and its share of
