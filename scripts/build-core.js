@@ -96,6 +96,7 @@ function buildCore(coreDir) {
   const dir = coreDir || CORE_DIR;
   const files = fs.readdirSync(dir)
     .filter(function (n) { return n.endsWith('.js'); })
+    .sort() // the same order on every OS (Windows and Linux list folders differently)
     .map(function (n) { return parseCoreFile(n, readText(path.join(dir, n))); });
   const ordered = sortByDependencies(files);
 
