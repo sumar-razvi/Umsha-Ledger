@@ -270,6 +270,7 @@ const CONFIG = {
   function signOut() {
     try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ }
     state.token = null; state.me = null;
+    readCache.clear(); // the next person on this phone must not see these answers
     if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
     location.hash = '#/';
     boot();
@@ -300,8 +301,20 @@ const CONFIG = {
     return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
   }
   class NetworkError extends Error {}
+  // The last requests and how long they took (Settings → System → Speed).
+  const speedLog = [];
+  function logSpeed(action, totalMs, serverMs, note) {
+    speedLog.unshift({ at: new Date().toTimeString().slice(0, 8), action, totalMs: Math.round(totalMs), serverMs: serverMs === undefined ? null : Math.round(serverMs), note: note || '' });
+    speedLog.length = Math.min(speedLog.length, 25);
+  }
   async function transmit(req) {
     if (!CONFIG.API_URL) throw Object.assign(new Error('The app is not connected to a server yet (CONFIG.API_URL).'), { code: 'E_CONFIG' });
+    const started = performance.now();
+    const out = await transmitOnce(req);
+    logSpeed(req.action, performance.now() - started, out && out.meta ? out.meta.ms : undefined, out && out.ok === false ? out.code : '');
+    return out;
+  }
+  async function transmitOnce(req) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 30000);
     let res;
@@ -317,12 +330,30 @@ const CONFIG = {
   }
   function apiError(res) { return Object.assign(new Error(res.message || 'Something went wrong'), { code: res.code, field: res.field }); }
 
-  // Reads: one attempt, errors thrown to the screen.
-  async function api(action, payload) {
+  // Reads: one attempt, errors thrown to the screen. A read repeated within
+  // 30 seconds is answered from memory (going back to a page is instant); any
+  // save clears that memory, so your own changes always show. {fresh: true}
+  // always asks the server.
+  const READ_TTL_MS = 30000;
+  const NO_READ_CACHE = ['attachments.get', 'cashup.preview', 'export.table', 'export.quickbooksJournals'];
+  const readCache = new Map();
+  function copyOf(v) { return typeof structuredClone === 'function' ? structuredClone(v) : JSON.parse(JSON.stringify(v)); }
+  async function api(action, payload, opts) {
+    const key = action + ' ' + JSON.stringify(payload || {});
+    const cacheable = !NO_READ_CACHE.includes(action);
+    const hit = readCache.get(key);
+    if (cacheable && hit && !(opts && opts.fresh) && Date.now() - hit.at < READ_TTL_MS) {
+      logSpeed(action, 0, undefined, 'from memory');
+      return copyOf(hit.data);
+    }
     const res = await transmit({ action, idToken: state.token, payload: payload || {} });
     if (!res.ok) {
       if (res.code === 'E_AUTH') needSignIn();
       throw apiError(res);
+    }
+    if (cacheable) {
+      readCache.set(key, { at: Date.now(), data: copyOf(res.data) });
+      if (readCache.size > 200) readCache.delete(readCache.keys().next().value);
     }
     return res.data;
   }
@@ -338,7 +369,7 @@ const CONFIG = {
     queue.inflight++; syncIndicator();
     try {
       const res = await transmit({ action: item.action, idToken: state.token, requestId: item.requestId, payload: item.payload });
-      if (res.ok) { queue.drop(item); queue.lastOk = true; return res.data; }
+      if (res.ok) { readCache.clear(); queue.drop(item); queue.lastOk = true; return res.data; }
       if (res.code === 'E_BUSY') throw new NetworkError('Busy');
       if (res.code === 'E_AUTH') { needSignIn(); throw Object.assign(apiError(res), { keep: true }); }
       queue.drop(item);
@@ -1122,8 +1153,8 @@ const CONFIG = {
     await draw();
   });
   route('/customers/:id', async (view, [id]) => {
-    const c = await api('contacts.get', { id });
-    const jobs = (await api('jobs.list', { contactId: id })).filter((j) => j.type === 'MTO_ORDER');
+    const [c, allJobs] = await Promise.all([api('contacts.get', { id }), api('jobs.list', { contactId: id })]);
+    const jobs = allJobs.filter((j) => j.type === 'MTO_ORDER');
     view.appendChild(h('div', { class: 'pagehead' }, h('h1', {}, c.name), h('span', { class: 'muted' }, c.id)));
     view.appendChild(h('div', { class: 'tiles' }, tile('Owes', rs(c.owesPaisa)), tile('Advance held', rs(c.advanceHeldPaisa)), tile('Orders', jobs.length)));
     view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Orders'), ordersTable(jobs, 'No orders yet.')));
@@ -1167,7 +1198,10 @@ const CONFIG = {
   // ---------- settings (Owner) ----------
   route('/settings', async (view) => {
     view.appendChild(h('h1', {}, 'Settings'));
-    const users = await api('users.list', {});
+    // Everything this page needs, fetched at the same time.
+    const [users, allTaxLoaded, periods, targetsLoaded] = await Promise.all([
+      api('users.list', {}), api('taxCodes.list', {}).catch(() => null), api('periods.list', {}),
+      can('kpiTargets.list') ? api('kpiTargets.list', {}) : Promise.resolve(null)]);
     const usersCard = h('div', { class: 'card' }, h('div', { class: 'pagehead' }, h('h2', { style: 'flex:1;margin:0' }, 'People'), h('button', { type: 'button', class: 'primary', onclick: () => userSheet() }, 'Add person')),
       dataTable([{ key: 'name', label: 'Name' }, { key: 'email', label: 'Google email' }, { key: 'role', label: 'Role', render: (u) => Permissions.ROLE_LABEL[u.role] + (u.store ? ' · ' + u.store : '') },
         { key: 'isActive', label: 'Active', render: (u) => (u.isActive ? 'Yes' : 'No') }], users, { onRow: (u) => userSheet(u) }));
@@ -1188,14 +1222,14 @@ const CONFIG = {
     view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Company'), form));
 
     const taxRows = state.taxCodes.slice();
-    const allTax = await api('taxCodes.list', {}).catch(() => taxRows);
+    const allTax = allTaxLoaded || taxRows;
     view.appendChild(h('div', { class: 'card' }, h('div', { class: 'pagehead' }, h('h2', { style: 'flex:1;margin:0' }, 'Tax codes'), h('button', { type: 'button', onclick: () => taxSheet() }, 'Add tax code')),
       h('p', { class: 'muted small' }, 'Rates come from your tax advisor. Changing a rate from a later date keeps the old rate for earlier documents.'),
       dataTable([{ key: 'id', label: 'Code' }, { key: 'name', label: 'Name', opt: true }, { key: 'kind', label: 'Kind', opt: true },
         { key: 'rateBps', label: 'Rate', num: true, render: (t) => pct(Number(t.rateBps)) }, { key: 'isActive', label: 'In use', render: (t) => (t.isActive ? 'Yes' : 'No') }, { key: 'effectiveFrom', label: 'From', render: (t) => fmtDate(t.effectiveFrom) + (t.effectiveTo ? ' to ' + fmtDate(t.effectiveTo) : '') }],
       allTax, { onRow: (t) => taxSheet(t), csv: 'tax-codes', empty: 'No active tax codes. Add them with your tax advisor.' })));
 
-    const periods = await api('periods.list', {});
+
     const months = [];
     for (let i = 0; i < 12; i++) { const d = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)) - 1 - i, 1)); months.push(d.toISOString().slice(0, 7)); }
     const pbox = h('div');
@@ -1220,7 +1254,7 @@ const CONFIG = {
         try { const r = await save('year.close', { fiscalYearEnd: fyEnd.value }, 'Year-end close'); toast('Year closed: net profit ' + rs(r.netProfitPaisa) + ' to retained earnings'); } catch (e) { toast(e.message, 'bad'); }
       } }, 'Close the year')))));
     if (can('kpiTargets.list')) {
-      const targets = await api('kpiTargets.list', {});
+      const targets = targetsLoaded || [];
       view.appendChild(h('div', { class: 'card' }, h('div', { class: 'pagehead' }, h('h2', { style: 'flex:1;margin:0' }, 'Dashboard targets'), h('button', { type: 'button', onclick: () => kpiTargetSheet() }, 'Add target')),
         h('p', { class: 'muted small' }, 'These colour the dashboard tiles (green, amber, red) and are what "vs target" compares with.'),
         dataTable([{ key: 'kpi', label: 'KPI' }, { key: 'brand', label: 'Brand' }, { key: 'period', label: 'Month', opt: true }, { key: 'target', label: 'Target', num: true },
@@ -1232,10 +1266,28 @@ const CONFIG = {
       h('button', { type: 'button', onclick: async () => { try { const r = await save('backup.now', {}, 'Backup'); toast('Backup saved: ' + r.name); } catch (e) { toast(e.message, 'bad'); } } }, 'Back up now'),
       h('button', { type: 'button', onclick: async () => { try { const r = await save('summaries.rebuild', {}, 'Rebuild summaries'); toast('Dashboard summaries rebuilt' + (r.monthlyDrift.length + r.dailyDrift.length ? ': ' + (r.monthlyDrift.length + r.dailyDrift.length) + ' rows corrected' : ', no differences')); } catch (e) { toast(e.message, 'bad'); } } }, 'Rebuild dashboard summaries'),
       h('a', { class: 'btn', href: '#/accounts' }, 'Chart of accounts')),
+      speedCard(),
       h('div', { class: 'row', style: 'margin-top:12px' }, field('Download a whole tab as CSV', tabSel), h('div', { style: 'flex:0 0 auto;margin-bottom:12px' }, h('button', { type: 'button', onclick: async () => {
         try { const t = await api('export.table', { tab: tabSel.value }); downloadText(t.filename, t.csv); } catch (e) { toast(e.message, 'bad'); }
       } }, 'Download')))));
   });
+  // How long the last requests took: total = what you waited, server = time
+  // spent in Apps Script; the difference is the network and Google's front door.
+  function speedCard() {
+    const box = h('div', { style: 'margin-top:16px' });
+    const draw = () => {
+      clear(box).appendChild(h('h3', {}, 'Speed (this phone, latest first)'));
+      box.appendChild(dataTable([
+        { key: 'at', label: 'Time' }, { key: 'action', label: 'Request' },
+        { key: 'totalMs', label: 'You waited', num: true, render: (r) => (r.note === 'from memory' ? 'instant' : (r.totalMs / 1000).toFixed(1) + ' s') },
+        { key: 'serverMs', label: 'Server', num: true, render: (r) => (r.serverMs === null ? '—' : (r.serverMs / 1000).toFixed(1) + ' s') },
+        { key: 'note', label: 'Note', opt: true },
+      ], speedLog.slice(), { empty: 'No requests yet.' }));
+      box.appendChild(h('div', { class: 'actions' }, h('button', { type: 'button', onclick: draw }, 'Update')));
+    };
+    draw();
+    return box;
+  }
   function taxSheet(t) {
     const box = h('div');
     const id = h('input', { value: t ? t.id : '', placeholder: 'e.g. WHT-SVC-F', disabled: !!t });
@@ -1373,6 +1425,7 @@ const CONFIG = {
         h('a', { class: 'btn', href: '#/purchases/expense' }, 'Quick expense'), can('payments.vendorAdvance') ? h('a', { class: 'btn', href: '#/purchases/advance' }, 'Advance to vendor') : null,
         h('a', { class: 'btn ghost', href: '#/vendors' }, 'Vendors'))));
     view.appendChild(h('div', { class: 'chips' }, [['UNPAID', 'Unpaid'], ['PAID', 'Paid'], ['all', 'All']].map(([k, l]) => h('button', { type: 'button', class: 'chip' + (k === st ? ' on' : ''), onclick: () => go('#/purchases?state=' + k) }, l))));
+    const ageing = can('reports.apAgeing') ? api('reports.apAgeing', { asOf: today() }) : null; // fetched alongside the bills
     const bills = await api('bills.list', st === 'all' ? {} : { state: st });
     view.appendChild(h('div', { class: 'card' }, dataTable([
       { key: 'date', label: 'Date', render: (b) => fmtDate(b.date), csv: (b) => b.date },
@@ -1383,7 +1436,7 @@ const CONFIG = {
       { key: 'state', label: 'Status', render: (b) => billState(b.state), csv: (b) => b.state },
     ], bills, { onRow: (b) => go('#/purchases/bills/' + b.id), csv: 'bills', empty: 'No bills here.', rowClass: (b) => (b.balancePaisa > 0 && b.dueDate && b.dueDate < today() ? 'overdue' : '') })));
     if (can('reports.apAgeing')) {
-      const age = await api('reports.apAgeing', { asOf: today() });
+      const age = await ageing;
       view.appendChild(h('div', { class: 'card' }, h('h2', {}, 'Who we owe'), dataTable([
         { key: 'contactName', label: 'Vendor' }, { key: 'current', label: 'Not due', money: true }, { key: 'd1_30', label: '1–30 days', money: true },
         { key: 'd31_60', label: '31–60', money: true, opt: true }, { key: 'd61_90', label: '61–90', money: true, opt: true }, { key: 'd90plus', label: '90+', money: true }, { key: 'total', label: 'Total', money: true },
@@ -2986,10 +3039,10 @@ const CONFIG = {
     view.appendChild(body);
     const cmpLabel = (DASH_COMPARE.find(([v]) => v === q.compareTo) || ['', ''])[1];
 
-    async function load(silent) {
+    async function load(silent, fresh) {
       let d;
       try {
-        d = await api('dashboard.get', { tab, period: q.period, brand: q.brand, compareTo: q.compareTo, from: q.period === 'CUSTOM' ? q.from : undefined, to: q.period === 'CUSTOM' ? q.to : undefined });
+        d = await api('dashboard.get', { tab, period: q.period, brand: q.brand, compareTo: q.compareTo, from: q.period === 'CUSTOM' ? q.from : undefined, to: q.period === 'CUSTOM' ? q.to : undefined }, { fresh: fresh });
       } catch (e) {
         if (!silent) { clear(body).appendChild(h('div', { class: 'notice bad' }, e.message)); }
         return;
@@ -3025,12 +3078,12 @@ const CONFIG = {
         else boxes[i].appendChild(chartTable(c));
       });
     }
-    refresh.addEventListener('click', () => load(false));
+    refresh.addEventListener('click', () => load(false, true));
     await load(false);
     // Refresh every 5 minutes while this page is open and visible.
     const timer = setInterval(() => {
       if (!body.isConnected) { clearInterval(timer); return; }
-      if (document.visibilityState === 'visible') load(true);
+      if (document.visibilityState === 'visible') load(true, true);
     }, 5 * 60 * 1000);
   }
 

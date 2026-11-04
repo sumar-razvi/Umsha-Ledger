@@ -506,6 +506,18 @@ async function noHorizontalScroll(page) {
     await kt.getByRole('button', { name: 'Save' }).click();
     await kt.waitFor({ state: 'detached' });
     assert.equal(gas.rows('KpiTargets').find((t) => t.kpi === 'minCash').redAt, 100000000);
+    // Speed: a page opened again within 30 s is answered from memory; a save clears it.
+    await dp.goto(base + '#/accounts');
+    await dp.waitForSelector('h1:has-text("Chart of accounts")');
+    await dp.goto(base + '#/reports');
+    await dp.goto(base + '#/accounts');
+    await dp.waitForSelector('h1:has-text("Chart of accounts")');
+    await dp.goto(base + '#/settings');
+    await dp.waitForSelector('h3:has-text("Speed")');
+    const speedRows = await dp.locator('h3:has-text("Speed") + .tablewrap tbody tr').allInnerTexts();
+    assert.ok(speedRows.some((r) => /accounts\.list/.test(r) && /instant/.test(r)), 'second visit answered from memory: ' + speedRows.slice(0, 6).join(' | '));
+    assert.ok(speedRows.some((r) => /accounts\.list/.test(r) && /\d\.\d s/.test(r)), 'first visit went to the server');
+
     // M9: audit log viewer, filtered, with what changed.
     await dp.goto(base + '#/reports/audit');
     await dp.locator('select[aria-label="Document type"]').selectOption('KPI_TARGET');
