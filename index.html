@@ -3122,7 +3122,8 @@ const CONFIG = {
     clear($app);
     const box = h('div', { class: 'gsi' });
     const note = h('p', { class: 'muted small' }, message || 'Sign in with the Google account the Owner added for you.');
-    $app.appendChild(h('div', { class: 'login' }, h('div', { class: 'brandmark' }, 'UMSHA'), h('div', { class: 'muted' }, 'Ledger'), box, note));
+    $app.appendChild(h('div', { class: 'login' }, h('div', { class: 'brandmark' }, 'UMSHA'), h('div', { class: 'muted' }, 'Ledger'), box, note,
+      h('p', { class: 'small' }, h('a', { href: 'privacy.html' }, 'Privacy'))));
     if (CONFIG.DEV_SIGNIN) {
       const users = await (await fetch('/dev/users')).json();
       users.forEach((u) => box.appendChild(h('button', { type: 'button', style: 'margin:4px', onclick: async () => {
