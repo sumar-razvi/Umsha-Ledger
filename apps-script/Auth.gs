@@ -6,7 +6,9 @@ var Auth = {
   TOKENINFO_URL: 'https://oauth2.googleapis.com/tokeninfo?id_token=',
   ISSUERS: ['accounts.google.com', 'https://accounts.google.com'],
 
-  // ID token -> verified email (lower case). Cached 5 minutes by token hash.
+  // ID token -> verified email (lower case). Cached by token hash until the
+  // token expires (at most 1 hour), so Google is asked once per sign-in rather
+  // than every few minutes. Users.isActive is still checked on every request.
   verify: function (idToken) {
     if (!idToken || typeof idToken !== 'string') throw Validate.coreError('E_AUTH', 'Please sign in.');
     var cache = CacheService.getScriptCache();
@@ -25,7 +27,7 @@ var Auth = {
       throw Validate.coreError('E_AUTH', 'Your sign-in could not be verified. Please sign in again.');
     }
     var email = String(info.email).toLowerCase();
-    cache.put(key, email, Math.max(1, Math.min(300, Number(info.exp) - now)));
+    cache.put(key, email, Math.max(1, Math.min(21600, Number(info.exp) - now)));
     return email;
   },
 
