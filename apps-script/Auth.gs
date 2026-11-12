@@ -34,7 +34,9 @@ var Auth = {
   // Verified email -> active Users row.
   userFor: function (email) {
     var user = Db.read('Users').filter(function (u) { return u.email === email && u.isActive; })[0];
-    if (!user) throw Validate.coreError('E_AUTH', 'The account ' + email + ' does not have access. Ask the Owner to add you.');
+    // field 'email': the sign-in itself was fine, the account is not a user.
+    // The app shows this message and stops signing in again by itself.
+    if (!user) throw Validate.coreError('E_AUTH', 'The account ' + email + ' does not have access. Ask the Owner to add you in Settings → People, with exactly this email.', 'email');
     return user;
   },
 
