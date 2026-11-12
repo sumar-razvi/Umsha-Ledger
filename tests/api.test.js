@@ -91,6 +91,7 @@ describe('auth', () => {
     const r = gas.call('stranger@gmail.com', 'session.me', {});
     assert.equal(r.code, 'E_AUTH');
     assert.match(r.message, /does not have access/);
+    assert.equal(r.field, 'email', 'the app uses this to show the reason instead of signing in again in a loop');
   });
 
   test('deactivated users are refused', () => {

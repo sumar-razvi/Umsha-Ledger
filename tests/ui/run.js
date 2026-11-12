@@ -551,6 +551,16 @@ async function noHorizontalScroll(page) {
     await noHorizontalScroll(dst);
     await shot(dst, 'dashboard-studio');
 
+    // An account that is not (or no longer) a user sees why, and is not signed in again in a loop.
+    const viewerSession = await signInAs(browser, base, 'Accountant', { width: 1280, height: 900 });
+    await viewerSession.page.waitForSelector('h1');
+    const viewerRow = gas.rows('Users').find((u) => u.role === 'VIEWER');
+    assert.ok(gas.call(gas.COMPANY_EMAIL, 'users.upsert', { id: viewerRow.id, email: viewerRow.email, name: viewerRow.name, role: 'VIEWER', isActive: false }).ok);
+    await viewerSession.page.goto(base + '#/reports/trial-balance');
+    await viewerSession.page.waitForSelector('.login .notice.bad:has-text("does not have access")');
+    await viewerSession.page.waitForTimeout(1500);
+    assert.equal(await viewerSession.page.locator('.login .notice.bad').count(), 1, 'stays on the refusal, no sign-in loop');
+
     console.log('ok - UI: book, advance, karigar, deliver, balance, receipts and journals (' + (SHOTS ? 'screenshots in ' + SHOTS : 'no screenshots') + ')');
   } catch (e) {
     console.error('not ok - UI test failed:', e.message);

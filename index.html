@@ -348,7 +348,7 @@ const CONFIG = {
     }
     const res = await transmit({ action, idToken: state.token, payload: payload || {} });
     if (!res.ok) {
-      if (res.code === 'E_AUTH') needSignIn();
+      if (res.code === 'E_AUTH') needSignIn(res);
       throw apiError(res);
     }
     if (cacheable) {
@@ -371,7 +371,7 @@ const CONFIG = {
       const res = await transmit({ action: item.action, idToken: state.token, requestId: item.requestId, payload: item.payload });
       if (res.ok) { readCache.clear(); queue.drop(item); queue.lastOk = true; return res.data; }
       if (res.code === 'E_BUSY') throw new NetworkError('Busy');
-      if (res.code === 'E_AUTH') { needSignIn(); throw Object.assign(apiError(res), { keep: true }); }
+      if (res.code === 'E_AUTH') { needSignIn(res); throw Object.assign(apiError(res), { keep: true }); }
       queue.drop(item);
       if (!interactive) toast('Could not save "' + item.label + '": ' + res.message, 'bad');
       throw apiError(res);
@@ -3111,17 +3111,24 @@ const CONFIG = {
 
   // ---------- sign-in screen and boot ----------
   let signInShown = false;
-  function needSignIn() {
+  // res: the server's E_AUTH answer. An expired sign-in just asks again; an
+  // account that is not a user (field 'email') shows why and does NOT sign
+  // in again by itself, or Google's automatic sign-in would loop forever.
+  function needSignIn(res) {
     if (signInShown) return;
     try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* ignore */ }
     state.token = null;
-    showLogin('Please sign in again to continue.');
+    readCache.clear();
+    const refused = !!(res && (res.field === 'email' || /does not have access/.test(res.message || ''))); // message test: servers deployed before the 'email' field
+    if (refused && window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
+    showLogin(refused ? res.message + ' To use a different Google account, tap the button and choose it.' : 'Please sign in again to continue.', { refused });
   }
-  async function showLogin(message) {
+  async function showLogin(message, opts) {
+    const refused = !!(opts && opts.refused);
     signInShown = true;
     clear($app);
     const box = h('div', { class: 'gsi' });
-    const note = h('p', { class: 'muted small' }, message || 'Sign in with the Google account the Owner added for you.');
+    const note = h('p', { class: refused ? 'notice bad' : 'muted small' }, message || 'Sign in with the Google account the Owner added for you.');
     $app.appendChild(h('div', { class: 'login' }, h('div', { class: 'brandmark' }, 'UMSHA'), h('div', { class: 'muted' }, 'Ledger'), box, note,
       h('p', { class: 'small' }, h('a', { href: 'privacy.html' }, 'Privacy'))));
     if (CONFIG.DEV_SIGNIN) {
@@ -3131,7 +3138,7 @@ const CONFIG = {
         setToken(t.token); signInShown = false; boot();
       } }, u.name + ' (' + Permissions.ROLE_LABEL[u.role] + ')')));
       box.style.flexWrap = 'wrap';
-      note.textContent = 'Demo server: pick anyone. Data lives in memory and resets when the server stops.';
+      if (!refused) note.textContent = 'Demo server: pick anyone. Data lives in memory and resets when the server stops.';
       return;
     }
     if (!CONFIG.API_URL || !CONFIG.OAUTH_CLIENT_ID) {
@@ -3140,9 +3147,9 @@ const CONFIG = {
     }
     try {
       await loadGsi();
-      google.accounts.id.initialize({ client_id: CONFIG.OAUTH_CLIENT_ID, auto_select: true, callback: (resp) => { setToken(resp.credential); signInShown = false; boot(); } });
+      google.accounts.id.initialize({ client_id: CONFIG.OAUTH_CLIENT_ID, auto_select: !refused, callback: (resp) => { setToken(resp.credential); signInShown = false; boot(); } });
       google.accounts.id.renderButton(box, { theme: 'outline', size: 'large', shape: 'pill', text: 'signin_with' });
-      google.accounts.id.prompt();
+      if (!refused) google.accounts.id.prompt(); // no automatic retry with an account that was just refused
     } catch (e) {
       note.textContent = 'Could not load Google sign-in. Check your connection and reload.';
     }
